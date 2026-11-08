@@ -1,0 +1,48 @@
+# OpenTelemetry Collector (contrib) for the demo.
+# Act 1: receives OTLP, re-exports it as Prometheus metrics, and exposes its own metrics.
+#
+# SECURITY NOTE (Act 3 failure scenario): the OTLP receivers below have NO TLS and NO client
+# authentication. In a hardened deployment they would use `tls:` with `client_ca_file` (mTLS)
+# and bind to a specific interface instead of 0.0.0.0. Inside the container 0.0.0.0 is required
+# because the host publishes the ports on loopback only (see docker-compose.yml).
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  telemetry:
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
