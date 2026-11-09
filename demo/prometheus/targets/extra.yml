@@ -1,0 +1,6 @@
+# Extension point for Act 2 (file_sd). Intentionally empty in Act 1.
+# Example entry:
+# - targets: ["detector:8000"]
+#   labels:
+#     component: anomaly-detector
+[]

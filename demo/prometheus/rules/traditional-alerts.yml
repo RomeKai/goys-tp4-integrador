@@ -1,0 +1,53 @@
+# Classic static-threshold alerts: the "traditional monitoring" baseline of the demo.
+# Act 2 shows an anomaly that stays below every one of these thresholds.
+# No Alertmanager on purpose: alerts are visible in Prometheus (/alerts) and in the Grafana dashboard.
+groups:
+  - name: traditional-thresholds
+    rules:
+      - alert: ProbeDown
+        expr: probe_success == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Probe {{ $labels.job }} failing for {{ $labels.instance }}"
+
+      - alert: HighHttpLatency
+        expr: probe_duration_seconds{job="blackbox-http"} > 0.5
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "HTTP latency above 500 ms for {{ $labels.instance }}"
+
+      - alert: HighIcmpRtt
+        expr: probe_icmp_duration_seconds{job="blackbox-icmp", phase="rtt"} > 0.1
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "ICMP RTT above 100 ms for {{ $labels.instance }}"
+
+      - alert: HostHighCpu
+        expr: 100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[1m]))) > 90
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host CPU usage above 90%"
+
+      - alert: HostHighMemory
+        expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host memory usage above 90%"
+
+      - alert: ScrapeTargetDown
+        expr: up == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Scrape target {{ $labels.job }}/{{ $labels.instance }} is down"

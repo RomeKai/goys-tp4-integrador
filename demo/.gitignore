@@ -1,0 +1,5 @@
+# Offline image backups (large binaries, never commit)
+images/
+*.tar
+*.tar.gz
+.env
