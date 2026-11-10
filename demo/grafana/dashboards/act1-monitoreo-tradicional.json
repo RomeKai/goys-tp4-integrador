@@ -158,7 +158,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)",
+          "expr": "count(ALERTS{alertstate=\"firing\",source!=\"ml\"}) or vector(0)",
           "legendFormat": "",
           "refId": "A",
           "instant": true
