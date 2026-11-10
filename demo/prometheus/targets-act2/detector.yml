@@ -1,0 +1,8 @@
+# file_sd targets for Act 2. docker-compose.act2.yml mounts this folder over prometheus/targets/,
+# so the Act 1-only stack stays free of dead targets.
+- targets: ["detector:8000"]
+  labels:
+    component: anomaly-detector
+- targets: ["web:9100"]
+  labels:
+    component: web-sensor

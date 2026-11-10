@@ -1,0 +1,15 @@
+# Act 2: alert driven by the ML anomaly detector (not by a fixed threshold on a raw metric).
+# The detector already applies its own debounce (score above its alarm line for several samples
+# in a row), so the rule only needs to read the flag.
+# In the Act 1-only stack no detector runs, the metric does not exist and this rule never fires.
+groups:
+  - name: ml-anomaly
+    rules:
+      - alert: AnomalyDetected
+        expr: goys_anomaly_flag == 1
+        for: 5s
+        labels:
+          severity: warning
+          source: ml # lets dashboards tell ML alerts apart from the classic threshold alerts
+        annotations:
+          summary: "ML detector: the latency/traffic pattern deviates from the learned baseline"

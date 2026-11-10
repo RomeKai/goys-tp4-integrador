@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Save every demo image into a single tar for offline backup.
+# Save every demo image (Act 1 + Act 2, including the locally built ones) into a single tar
+# for offline backup.
 # Output: demo/images/goys-demo-images.tar (git-ignored; copy it to a USB drive).
 # Restore on another machine with: demo/scripts/load-images.sh
+# Run scripts/pull-images.sh first: it pulls the public images and builds the local ones.
 set -euo pipefail
 
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,7 +13,7 @@ OUT_DIR="$DEMO_DIR/images"
 OUT_FILE="$OUT_DIR/goys-demo-images.tar"
 mkdir -p "$OUT_DIR"
 
-mapfile -t IMAGES < <(docker compose config --images | sort -u)
+mapfile -t IMAGES < <(docker compose -f docker-compose.yml -f docker-compose.act2.yml config --images | sort -u)
 
 # Make sure every image is present locally before saving.
 for img in "${IMAGES[@]}"; do

@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
-# Pre-pull every image used by the demo (requires internet; run once while online).
-# The image list is read from docker-compose.yml, so there is a single source of truth.
+# Prepare every image used by the demo, Act 1 and Act 2 (requires internet; run once while online).
+#  - Public images (pinned versions) are pulled.
+#  - Local images (goys-demo/tools, goys-demo/detector) are BUILT here, so that pip/apk run now
+#    and not at the fair. save-images.sh then puts them in the offline tar.
+# The image list is read from the compose files, so there is a single source of truth.
 set -euo pipefail
 
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DEMO_DIR"
 
-echo "Pulling images defined in docker-compose.yml ..."
-docker compose pull
+COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.act2.yml)
+
+echo "Building local images (tools, detector) ..."
+"${COMPOSE[@]}" build detector netem
+
+echo
+echo "Pulling public images ..."
+"${COMPOSE[@]}" pull --ignore-buildable
 
 echo
 echo "Images ready for offline use:"
-docker compose config --images | sort -u
+"${COMPOSE[@]}" config --images | sort -u
