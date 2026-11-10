@@ -1,0 +1,97 @@
+# Demo TP4 - Act 2: "incidents that thresholds miss, but an ML detector catches".
+# Override file, always used on top of the Act 1 stack:
+#   docker compose -f docker-compose.yml -f docker-compose.act2.yml up -d
+#
+# Adds five services to the same "demo-net" network:
+#   netem      - sidecar sharing api's network namespace; `tc netem` adds latency/jitter to api
+#   attacker   - runs a slow nmap SYN scan against the demo network
+#   client     - normal background traffic, so the baseline is realistic
+#   web-sensor - node_exporter inside web's network namespace (packets/connections web sees)
+#   detector   - IsolationForest anomaly detector reading Prometheus and exposing /metrics
+# Both incidents are started/stopped with scripts/inject-incident.sh (nothing runs by default).
+#
+# Locally built images use an explicit version tag (no "latest"). They are built by
+# scripts/pull-images.sh so that they end up in the offline tar.
+
+x-tools-build: &tools-build
+  build:
+    context: ./tools
+  image: goys-demo/tools:1.0.0
+
+services:
+  # --- Incident 1: gradual degradation (latency + jitter on api) --------------------------
+  netem:
+    <<: *tools-build
+    restart: unless-stopped
+    # Same network namespace as api: `tc` here shapes api's eth0. No `networks:` allowed with this mode.
+    network_mode: "service:api"
+    cap_add:
+      - NET_ADMIN # required by `tc qdisc ... netem`
+    depends_on:
+      - api
+
+  # --- Incident 2: slow port scan -----------------------------------------------------------
+  attacker:
+    <<: *tools-build
+    restart: unless-stopped
+    cap_add:
+      - NET_RAW # raw sockets for the nmap SYN scan
+    networks:
+      demo-net:
+        ipv4_address: 172.28.0.50
+
+  # --- Normal background traffic (so the baseline is realistic, not perfectly regular) ---------
+  client:
+    <<: *tools-build
+    restart: unless-stopped
+    command: ["/usr/local/bin/client.sh"]
+    networks:
+      demo-net:
+        ipv4_address: 172.28.0.51
+    depends_on:
+      - web
+      - api
+
+  # --- Network sensor inside web's namespace: counts the packets/connections web really sees ----
+  web-sensor:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    network_mode: "service:web"
+    command:
+      - "--collector.disable-defaults"
+      - "--collector.netdev"
+      - "--collector.netstat"
+      - "--collector.sockstat"
+    depends_on:
+      - web
+
+  # --- ML anomaly detector ---------------------------------------------------------------------
+  detector:
+    build:
+      context: ./detector
+    image: goys-demo/detector:1.0.0
+    restart: unless-stopped
+    environment:
+      PROMETHEUS_URL: http://prometheus:9090
+      # Seconds of live "normal" data used to learn the baseline before scoring starts.
+      WARMUP_SECONDS: ${DETECTOR_WARMUP_SECONDS:-180}
+    networks:
+      demo-net:
+        ipv4_address: 172.28.0.40
+    depends_on:
+      - prometheus
+    cpus: 0.5
+    mem_limit: 256m
+
+  # --- Register the detector as a Prometheus target (Act 1 file_sd extension point) ------------
+  # Same container path as the Act 1 mount, so Compose REPLACES that mount: Prometheus reads
+  # targets-act2/ (only detector.yml) instead of targets/ (only an empty placeholder). Because the
+  # replacement lives here, the Act 1-only stack never has a dead "detector" target.
+  prometheus:
+    volumes:
+      - ./prometheus/targets-act2:/etc/prometheus/targets:ro
+
+  # --- Open the Act 2 dashboard by default (the Act 1 dashboard stays one click away) -----------
+  grafana:
+    environment:
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/act2-deteccion-anomalias.json

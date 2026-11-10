@@ -2,15 +2,16 @@
 # Todas las imagenes estan fijadas por version (sin "latest") para que la demo sea
 # reproducible y se pueda guardar/cargar offline (ver scripts/).
 #
-# Extension points for Act 2 (NOT implemented here):
-#   1. Network "demo-net" is a plain bridge with fixed subnet 172.28.0.0/24. Act 2 can attach an
-#      extra container (traffic generator / port scanner / latency injector) with an override file:
+# Extension points used by Act 2 (implemented in docker-compose.act2.yml):
+#   1. Network "demo-net" is a plain bridge with fixed subnet 172.28.0.0/24. Act 2 attaches extra
+#      containers (port scanner, normal-traffic client, ML detector) with an override file:
 #        docker compose -f docker-compose.yml -f docker-compose.act2.yml up -d
-#      and reach "web" and "api" by service name or by their fixed IPs below.
-#   2. Prometheus reads extra scrape targets from prometheus/targets/*.yml (file_sd), so the
-#      Act 2 detector/exporter can be registered without editing prometheus.yml.
-#   3. Prometheus reads alert rules from prometheus/rules/*.yml; Act 2 may add rule files there.
-#   4. Latency injection can be done with `tc netem` inside a container that has NET_ADMIN.
+#      and reaches "web" and "api" by service name or by their fixed IPs below.
+#   2. Prometheus reads extra scrape targets from prometheus/targets/*.yml (file_sd). The Act 2
+#      override mounts prometheus/targets-act2/ at that path to register the detector and a sensor.
+#   3. Prometheus reads alert rules from prometheus/rules/*.yml; Act 2 adds ml-alerts.yml there.
+#   4. Latency injection uses `tc netem` in a sidecar with NET_ADMIN that shares api's network
+#      namespace (see scripts/inject-incident.sh).
 
 name: goys-demo
 
