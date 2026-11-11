@@ -69,7 +69,7 @@ services:
   detector:
     build:
       context: ./detector
-    image: goys-demo/detector:1.0.0
+    image: goys-demo/detector:1.1.0
     restart: unless-stopped
     environment:
       PROMETHEUS_URL: http://prometheus:9090
