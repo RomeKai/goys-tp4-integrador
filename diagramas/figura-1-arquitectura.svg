@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 810 560" width="810" height="560" font-family="Arial, Helvetica, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Arquitectura de la demostración en tres actos</title>
+  <desc id="d">Diagrama de izquierda a derecha con tres actos numerados. Acto 1, monitoreo por umbrales: los servicios web y api reciben tráfico normal de un cliente, son observados por exporters, Prometheus aplica umbrales y Grafana muestra los tableros. Acto 2, detección con aprendizaje automático: el atacante 1 realiza un escaneo lento de puertos hacia los servicios y un detector de anomalías basado en Isolation Forest, que lee Prometheus, lo detecta. Acto 3, explicación y mTLS: un módulo de causa raíz reúne evidencia medida y la explica con un LLM local, y publica la explicación en Grafana; además el atacante 2 intenta inyectar telemetría falsa en el OpenTelemetry Collector sin credenciales, mientras un agente OTLP legítimo con certificado de cliente envía telemetría verdadera. La puerta de entrada del Collector acepta todo sin mTLS y exige certificado de cliente con mTLS, con lo que bloquea al atacante 2.</desc>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <marker id="ahr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7a1010"/>
+    </marker>
+    <style>
+      .box { fill:#ffffff; stroke:#222; stroke-width:1.6; }
+      .key { fill:#e6e6e6; stroke:#222; stroke-width:2; }
+      .adv { fill:#4a1010; stroke:#000; stroke-width:2; }
+      .ttl { font-size:14px; font-weight:700; fill:#111; text-anchor:middle; }
+      .sub { font-size:12px; fill:#222; text-anchor:middle; }
+      .lbl { font-size:12px; fill:#222; }
+      .ttlw { font-size:14px; font-weight:700; fill:#fff; text-anchor:middle; }
+      .subw { font-size:12px; fill:#fff; text-anchor:middle; }
+      .edge { fill:none; stroke:#222; stroke-width:1.6; marker-end:url(#ah); }
+      .edgea { fill:none; stroke:#7a1010; stroke-width:2.2; marker-end:url(#ahr); }
+      .bg { fill:#111; }
+      .bn { font-size:12px; font-weight:700; fill:#fff; text-anchor:middle; }
+    </style>
+  </defs>
+
+  <rect width="810" height="560" fill="#ffffff"/>
+
+  <!-- Frontera de la demostración -->
+  <rect x="8" y="8" width="794" height="462" rx="8" fill="#fafafa" stroke="#555" stroke-width="1.4" stroke-dasharray="3 3"/>
+  <text x="20" y="27" class="lbl" font-weight="700">Red de la demostración (contenedores Docker)</text>
+
+  <!-- ===== Columna izquierda ===== -->
+  <rect class="box" x="20" y="44" width="150" height="40" rx="5"/>
+  <text class="ttl" x="95" y="62">Cliente</text>
+  <text class="sub" x="95" y="77">tráfico normal</text>
+
+  <rect class="box" x="20" y="108" width="150" height="46" rx="5"/>
+  <text class="ttl" x="95" y="128">Servicios web y api</text>
+  <text class="sub" x="95" y="145">lo que se vigila</text>
+
+  <rect class="adv" x="20" y="184" width="150" height="56" rx="5"/>
+  <text class="ttlw" x="95" y="205">Atacante 1</text>
+  <text class="subw" x="95" y="222">escaneo lento de puertos</text>
+  <text class="subw" x="95" y="235" font-size="11">(nmap -T2)</text>
+
+  <rect class="box" x="20" y="300" width="150" height="56" rx="5"/>
+  <text class="ttl" x="95" y="322">Agente legítimo</text>
+  <text class="sub" x="95" y="340">OTLP con certificado</text>
+
+  <rect class="adv" x="20" y="394" width="150" height="56" rx="5"/>
+  <text class="ttlw" x="95" y="415">Atacante 2</text>
+  <text class="subw" x="95" y="432">telemetría falsa, sin</text>
+  <text class="subw" x="95" y="445" font-size="11">credenciales (OTLP)</text>
+
+  <path class="edge" d="M95,84 L95,108"/>
+  <path class="edgea" d="M95,184 L95,154"/>
+  <path class="edge" d="M170,131 L250,131"/>
+
+  <!-- ===== Columna central ===== -->
+  <rect class="box" x="250" y="106" width="150" height="50" rx="5"/>
+  <text class="ttl" x="325" y="127">Exporters</text>
+  <text class="sub" x="325" y="145">sondeo y métricas</text>
+
+  <rect class="key" x="270" y="316" width="150" height="62" rx="5"/>
+  <text class="ttl" x="345" y="340">OTel Collector</text>
+  <text class="sub" x="345" y="359">recibe telemetría OTLP</text>
+
+  <!-- Puerta mTLS -->
+  <line x1="215" y1="292" x2="215" y2="458" stroke="#111" stroke-width="3.6" stroke-dasharray="9 5"/>
+  <text class="lbl" x="215" y="285" text-anchor="middle" font-weight="700">puerta mTLS</text>
+  <path class="edge" d="M170,336 L270,346"/>
+  <text class="lbl" x="226" y="316" font-size="11.5">pasa</text>
+  <path class="edgea" d="M170,421 L206,421"/>
+  <path d="M203,412 L227,430 M227,412 L203,430" stroke="#7a1010" stroke-width="3.4" stroke-linecap="round" fill="none"/>
+  <text class="lbl" x="222" y="392" font-size="11.5" fill="#7a1010">rechazado</text>
+
+  <!-- Estados de la puerta -->
+  <rect x="250" y="402" width="190" height="58" rx="5" fill="#ffffff" stroke="#222" stroke-width="1.2" stroke-dasharray="3 3"/>
+  <text class="lbl" x="260" y="419" font-weight="700">Estados de la puerta</text>
+  <text class="lbl" x="260" y="435" font-size="11.5"><tspan font-weight="700">sin mTLS:</tspan> acepta todo</text>
+  <text class="lbl" x="260" y="451" font-size="11.5"><tspan font-weight="700">con mTLS:</tspan> exige certificado</text>
+
+  <!-- ===== Prometheus ===== -->
+  <rect class="key" x="470" y="168" width="130" height="100" rx="5"/>
+  <text class="ttl" x="535" y="204">Prometheus</text>
+  <text class="sub" x="535" y="226">umbrales fijos:</text>
+  <text class="sub" x="535" y="243">alertas clásicas</text>
+
+  <path class="edge" d="M400,140 L470,190"/>
+  <path class="edge" d="M420,347 L535,347 L535,268"/>
+  <text class="lbl" x="428" y="340" font-size="11.5">métricas</text>
+
+  <!-- ===== Columna derecha ===== -->
+  <rect class="key" x="650" y="48" width="140" height="60" rx="5"/>
+  <text class="ttl" x="720" y="73">Detector ML</text>
+  <text class="sub" x="720" y="92">Isolation Forest</text>
+
+  <rect class="key" x="650" y="148" width="140" height="96" rx="5"/>
+  <text class="ttl" x="720" y="172">Causa raíz (RCA)</text>
+  <text class="sub" x="720" y="192">evidencia medida +</text>
+  <text class="sub" x="720" y="208">LLM local en CPU</text>
+  <text class="sub" x="720" y="224" font-size="11">(Ollama, llama3.2:1b)</text>
+
+  <rect class="box" x="650" y="290" width="140" height="56" rx="5"/>
+  <text class="ttl" x="720" y="314">Grafana</text>
+  <text class="sub" x="720" y="333">tableros y anotaciones</text>
+
+  <!-- Prometheus <-> detector -->
+  <path class="edge" d="M500,168 L500,78 L650,78"/>
+  <text class="lbl" x="508" y="70">consulta</text>
+  <path class="edge" d="M650,98 L570,98 L570,168"/>
+  <text class="lbl" x="578" y="140">puntaje</text>
+
+  <!-- Prometheus -> RCA, Grafana -->
+  <path class="edge" d="M600,200 L650,200"/>
+  <path class="edge" d="M600,252 L650,312"/>
+
+  <!-- Detector -> RCA -> Grafana -->
+  <path class="edge" d="M720,108 L720,148"/>
+  <text class="lbl" x="728" y="132">alerta</text>
+  <path class="edge" d="M720,244 L720,290"/>
+  <text class="lbl" x="728" y="272">explicación</text>
+
+  <!-- ===== Insignias de actos ===== -->
+  <!-- Acto 1 -->
+  <g><circle class="bg" cx="22" cy="108" r="10"/><text class="bn" x="22" y="112.5">1</text></g>
+  <g><circle class="bg" cx="252" cy="106" r="10"/><text class="bn" x="252" y="110.5">1</text></g>
+  <g><circle class="bg" cx="472" cy="168" r="10"/><text class="bn" x="472" y="172.5">1</text></g>
+  <g><circle class="bg" cx="652" cy="290" r="10"/><text class="bn" x="652" y="294.5">1</text></g>
+  <!-- Acto 2 -->
+  <g><circle class="bg" cx="22" cy="184" r="10" stroke="#fff" stroke-width="1.5"/><text class="bn" x="22" y="188.5">2</text></g>
+  <g><circle class="bg" cx="652" cy="48" r="10"/><text class="bn" x="652" y="52.5">2</text></g>
+  <g><circle class="bg" cx="676" cy="290" r="10"/><text class="bn" x="676" y="294.5">2</text></g>
+  <!-- Acto 3 -->
+  <g><circle class="bg" cx="22" cy="300" r="10"/><text class="bn" x="22" y="304.5">3</text></g>
+  <g><circle class="bg" cx="22" cy="394" r="10" stroke="#fff" stroke-width="1.5"/><text class="bn" x="22" y="398.5">3</text></g>
+  <g><circle class="bg" cx="272" cy="316" r="10"/><text class="bn" x="272" y="320.5">3</text></g>
+  <g><circle class="bg" cx="652" cy="148" r="10"/><text class="bn" x="652" y="152.5">3</text></g>
+  <g><circle class="bg" cx="700" cy="290" r="10"/><text class="bn" x="700" y="294.5">3</text></g>
+
+  <!-- ===== Leyenda ===== -->
+  <text class="lbl" x="20" y="494" font-weight="700">Actos</text>
+  <g><circle class="bg" cx="80" cy="490" r="9"/><text class="bn" x="80" y="494.5">1</text></g>
+  <text class="lbl" x="95" y="494">Monitoreo por umbrales</text>
+  <g><circle class="bg" cx="270" cy="490" r="9"/><text class="bn" x="270" y="494.5">2</text></g>
+  <text class="lbl" x="285" y="494">Detección con aprendizaje automático</text>
+  <g><circle class="bg" cx="555" cy="490" r="9"/><text class="bn" x="555" y="494.5">3</text></g>
+  <text class="lbl" x="570" y="494">Explicación con LLM y mTLS</text>
+
+  <line x1="20" y1="520" x2="60" y2="520" stroke="#222" stroke-width="1.6" marker-end="url(#ah)"/>
+  <text class="lbl" x="68" y="524">flujo de datos</text>
+  <line x1="190" y1="520" x2="230" y2="520" stroke="#7a1010" stroke-width="2.2" marker-end="url(#ahr)"/>
+  <text class="lbl" x="238" y="524">ataque</text>
+  <rect x="320" y="512" width="30" height="16" fill="#4a1010" stroke="#000" stroke-width="2"/>
+  <text class="lbl" x="358" y="524">origen del ataque</text>
+  <line x1="500" y1="520" x2="540" y2="520" stroke="#111" stroke-width="3.6" stroke-dasharray="9 5"/>
+  <text class="lbl" x="548" y="524">frontera de confianza (mTLS)</text>
+  <rect x="20" y="540" width="30" height="14" fill="#e6e6e6" stroke="#222" stroke-width="2"/>
+  <text class="lbl" x="58" y="551">componente central</text>
+</svg>
