@@ -1,0 +1,111 @@
+# Demo TP4 - Act 3: "explain the root cause with a local LLM" + "telemetry poisoning and mTLS".
+# Override file, always used on top of Acts 1 and 2:
+#   docker compose -f docker-compose.yml -f docker-compose.act2.yml -f docker-compose.act3.yml up -d
+# (scripts/act3.sh up does exactly that and remembers whether mTLS is on.)
+#
+# Adds four services to the same "demo-net" network:
+#   ollama      - local LLM runtime (CPU). The model lives in the external volume goys-ollama-models.
+#   rca         - watches the detector, gathers evidence, asks the LLM, publishes the explanation
+#   otlp-agent  - the LEGITIMATE OTLP sender (plain by default, mTLS after `act3.sh mtls on`)
+#   poisoner    - the ATTACKER, idle until `act3.sh poison on`
+# and changes one service:
+#   otel-collector - merges an overlay config (plain or mTLS) and mounts the server certificates.
+#
+# Locally built images use an explicit version tag (no "latest"); scripts/pull-images.sh builds them.
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-sender-build: &sender-build
+  build:
+    context: ./sender
+  image: goys-demo/sender:1.0.0
+
+# The model is ~1.3 GB. It lives in an EXTERNAL volume so that `docker compose down -v` (clean start)
+# never deletes it. scripts/pull-model.sh creates and fills it (needs internet, once).
+volumes:
+  ollama-models:
+    external: true
+    name: goys-ollama-models
+
+services:
+  # --- Part 3a: local LLM ---------------------------------------------------------------------
+  ollama:
+    # The "-rocm" variant is much smaller than the default tag (4.65 GB vs 8.43 GB: no CUDA libraries) and runs on CPU too.
+    image: ollama/ollama:0.40.10-rocm
+    <<: *restart
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: 30m # keep the model in RAM between incidents
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks:
+      demo-net:
+        ipv4_address: 172.28.0.60
+    # Inference must not starve the probes: a saturated CPU would change the latency the detector watches.
+    # Override with OLLAMA_CPUS in .env if the laptop exposes fewer CPUs to Docker (docker info --format "{{.NCPU}}").
+    cpus: ${OLLAMA_CPUS:-4}
+    mem_limit: 3g
+
+  rca:
+    build:
+      context: ./rca
+    image: goys-demo/rca:1.0.0
+    <<: *restart
+    environment:
+      PROMETHEUS_URL: http://prometheus:9090
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${RCA_MODEL:-llama3.2:1b}
+      GRAFANA_URL: http://grafana:3000
+      # Same demo-only credentials as Grafana itself (override through .env). Never commit .env.
+      GRAFANA_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GRAFANA_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      LLM_TIMEOUT_SECONDS: ${RCA_LLM_TIMEOUT_SECONDS:-90}
+    ports:
+      - "127.0.0.1:8085:8085" # read-only page with the latest explanations and their evidence
+    networks:
+      demo-net:
+        ipv4_address: 172.28.0.61
+    # No depends_on on ollama on purpose: if the LLM is missing the service must still start and show evidence.
+    cpus: 0.5
+    mem_limit: 128m
+
+  # --- Part 3b: telemetry poisoning and mTLS ----------------------------------------------------------
+  otel-collector:
+    # --config twice: the base file (Acts 1-2) plus an overlay. Plain overlay = nothing changes;
+    # mTLS overlay = both OTLP receivers require client certificates.
+    command: ["--config=/etc/otelcol/config.yaml", "--config=/etc/otelcol/overlay.yaml"]
+    volumes:
+      - ./otel/${OTEL_OVERLAY:-overlay-plain.yaml}:/etc/otelcol/overlay.yaml:ro
+      # Only the SERVER half of the PKI (its certificate, its key, the CA certificate). The CA key stays on the host.
+      - ./certs/server:/certs:ro
+
+  otlp-agent:
+    <<: [*sender-build, *restart]
+    command: ["/usr/local/bin/legit.sh"]
+    environment:
+      OTLP_MODE: ${OTLP_MODE:-plain}
+    volumes:
+      # Only the CLIENT half: the legitimate agent's certificate and key. The attacker gets nothing.
+      - ./certs/client:/certs:ro
+    networks:
+      demo-net:
+        ipv4_address: 172.28.0.53
+    depends_on:
+      - otel-collector
+
+  poisoner:
+    <<: [*sender-build, *restart]
+    # Idle until `act3.sh poison on` runs attack.sh inside it. No certificates are mounted here.
+    networks:
+      demo-net:
+        ipv4_address: 172.28.0.52
+    depends_on:
+      - otel-collector

@@ -1,0 +1,9 @@
+# Act 3 default overlay: changes nothing. OTLP stays unauthenticated and unencrypted (Acts 1-2 behaviour).
+# scripts/act3.sh mtls on swaps this file for overlay-mtls.yaml.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318

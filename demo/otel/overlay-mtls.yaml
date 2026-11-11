@@ -1,0 +1,19 @@
+# Act 3 hardening overlay: require mutual TLS on both OTLP receivers.
+# It is MERGED on top of collector-config.yaml (the Collector accepts several --config files and
+# deep-merges them), so this file is the complete difference between "anyone can send" and
+# "only holders of a certificate signed by our CA can send".
+#   cert_file / key_file : the server proves ITS identity to the sender (server certificate)
+#   client_ca_file       : the server demands a CLIENT certificate signed by this CA (this is what makes it mutual)
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        tls:
+          cert_file: /certs/server.crt
+          key_file: /certs/server.key
+          client_ca_file: /certs/ca.crt
+      http:
+        tls:
+          cert_file: /certs/server.crt
+          key_file: /certs/server.key
+          client_ca_file: /certs/ca.crt
