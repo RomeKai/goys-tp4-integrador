@@ -1,19 +1,10 @@
-<!--
-ESQUELETO DEL ARTÍCULO — Modalidad B (Estado del Arte)
-Estado: SKELETON. Cada sección tiene (1) la extensión objetivo del template como comentario y (2) un esquema de argumentos a redactar.
-Convención: [n] = referencia numerada de la sección "Referencias" (formato IEEE). Todas las referencias de la lista fueron verificadas en línea
-(ver nota de verificación al final del archivo). No agregar referencias sin verificar título, autores, año y URL.
-Formato de entrega (template-documento.md): A4, márgenes 2.5 cm, Times New Roman/Arial 12 pt, interlineado 1.5, 5-7 páginas, PDF, español.
-Presupuesto aproximado: 12 pt con interlineado 1.5 ≈ 350-400 palabras por página (sin tablas/figuras).
--->
-
-# Observabilidad inteligente en redes: del monitoreo reactivo al AIOps predictivo (OpenTelemetry, eBPF y ML)
+# Observabilidad inteligente en redes: del monitoreo reactivo al AIOps predictivo (OpenTelemetry, eBPF y aprendizaje automático)
 
 ![UTN Logo]
 
 **Universidad Tecnológica Nacional** — Facultad Regional La Plata
 
-**Carrera:** [Ingeniería en Sistemas / Ingeniería Electrónica / según corresponda]
+**Carrera:** Ingeniería en Sistemas de Información
 
 **Cátedra:** Gestión Operativa y Seguridad en Redes
 
@@ -21,192 +12,152 @@ Presupuesto aproximado: 12 pt con interlineado 1.5 ≈ 350-400 palabras por pág
 
 **Modalidad:** B — Artículo de Revisión del Estado del Arte
 
-**Grupo:** [Nombre del grupo]
+**Grupo:** 1
 
 **Integrantes:**
-- [Apellido, Nombre]
-- [Apellido, Nombre]
-- [Apellido, Nombre]
-- [Apellido, Nombre]
+- Cemino, Conrado
+- Monfroglio, Romeo Lorenzo
 
-**Fecha de entrega:** [Fecha]
+**Docentes:** Osvaldo Falabella · Emanuel Rodríguez
+
+**Fecha de entrega:** Noviembre 2026
 
 ---
 
 ## Resumen
 
-<!-- Extensión objetivo: 100-150 palabras. Debe leerse de forma independiente al resto del artículo. Redactar AL FINAL, cuando las secciones 2-5 estén cerradas. -->
+El monitoreo de redes basado en umbrales estáticos detecta los incidentes tarde y no explica sus causas. Este artículo revisa la evolución de la telemetría de red (SNMP, NetFlow/IPFIX, gNMI, OpenTelemetry y eBPF) y de la analítica operativa (detección de anomalías con aprendizaje automático y análisis de causa raíz asistido por modelos de lenguaje). Se identifica una convergencia hacia OpenTelemetry como estándar de transporte y hacia eBPF como fuente de datos sin instrumentación, y se documentan los límites medidos del análisis asistido por inteligencia artificial. La seguridad se aborda en dos planos: las anomalías como señales de ataque y el propio pipeline de telemetría como superficie de ataque. Se discuten brechas abiertas y oportunidades para la ingeniería en sistemas de información.
 
-Esquema (una frase por punto, en este orden):
-
-- Problema: el monitoreo por umbrales detecta tarde y no explica la causa; la red y los servicios son cada vez más dinámicos (contenedores, microservicios).
-- Alcance: evolución de la telemetría de red (SNMP, NetFlow/IPFIX, gNMI, OpenTelemetry, eBPF) y de la operación (detección de anomalías con ML, RCA asistido por LLM).
-- Hallazgos del estado del arte: convergencia hacia OpenTelemetry/OTLP como estándar de transporte y eBPF como fuente de datos sin instrumentación; madurez reciente de los proyectos (graduaciones CNCF, RFC 9669).
-- Seguridad: las anomalías son señales de ataque (escaneo de puertos, exfiltración) y el propio pipeline de telemetría es superficie de ataque (PII en trazas, falta de mTLS en el Collector).
-- Oportunidades: detección predictiva explicable, LLM locales con verificación, privacidad por diseño en telemetría.
-- Palabras clave: observabilidad, AIOps, OpenTelemetry, eBPF, detección de anomalías, seguridad de red.
+**Palabras clave:** observabilidad, AIOps, OpenTelemetry, eBPF, detección de anomalías, seguridad de red.
 
 ## 1. Introducción
 
-<!-- Extensión objetivo: ½ página (~180-200 palabras). Incluye párrafo explícito de seguridad (el tema debe cubrir Redes, Operación y Seguridad). -->
+La red dejó de ser un conjunto de dispositivos estáticos: hoy conviven el tráfico este-oeste entre contenedores y los servicios efímeros. A criterio de los autores, el monitoreo reactivo por umbrales fijos produce ruido de alertas, correlaciona poco las señales y no explica las causas; un incidente sutil, dentro de rangos aceptables, no cruza ningún umbral. AIOps surgió para atender desafíos operativos de este tipo (cf. Dang et al., 2019). Los estándares abiertos de telemetría (OpenTelemetry, OTLP) y eBPF abarataron la observación, y el aprendizaje automático y los modelos de lenguaje grandes (LLM) prometen pasar de avisar a anticipar y explicar.
 
-- **Contexto (Redes):** la red dejó de ser un conjunto de dispositivos estáticos; hoy conviven tráfico este-oeste entre contenedores, overlays y servicios efímeros donde un contador de interfaz no alcanza.
-- **Problema (Operación):** el monitoreo reactivo (umbrales estáticos tipo Nagios/Zabbix) produce ruido de alertas, no correlaciona señales y no explica causas [10]. Un incidente "sutil" (degradación gradual, patrón atípico dentro de rangos aceptables) no cruza ningún umbral.
-- **Por qué importa hoy:** estándares abiertos (OpenTelemetry, OTLP) y captura en kernel (eBPF) bajaron el costo de observar; ML y LLM prometen pasar de "avisar" a "anticipar y explicar".
-- **Seguridad (párrafo obligatorio):** (a) la telemetría es sensor de seguridad (flujos y syscalls revelan escaneos, movimiento lateral, exfiltración); (b) el pipeline de observabilidad es un activo crítico con datos sensibles (PII en atributos de trazas, credenciales en logs) y un punto de ataque si el Collector acepta tráfico sin TLS/mTLS [18].
-- **Objetivo:** revisar el estado del arte y las innovaciones 2023-2026, identificar brechas, y mostrar un caso mínimo reproducible (demo de la Feria) que ilustra el contraste umbral vs. ML.
-- **Estructura:** una oración por sección (2: estado del arte y Tabla 1; 3: innovaciones; 4: oportunidades; 5: conclusiones).
-- **Trabajo previo:** se reutiliza la investigación de IntellOps (GIDAS, UTN FRLP) [25] como antecedente; se cita, no se reproduce.
+La seguridad atraviesa el tema en dos planos. La telemetría es un sensor: los flujos y los eventos del kernel revelan escaneos de puertos, movimiento lateral y exfiltración. A la vez, el pipeline de observabilidad concentra datos sensibles y, si acepta tráfico sin cifrado ni autenticación, se convierte en un punto de ataque (OpenTelemetry, s.f.-a).
+
+Este artículo revisa el estado del arte y las innovaciones de 2023-2026, identifica brechas y presenta un caso mínimo reproducible (Figura 1), apoyado en la investigación previa del proyecto IntellOps (Equipo InfraIT GIDAS, 2026), citada y no reproducida. Las secciones 2 a 5 abordan el estado del arte, las innovaciones, las oportunidades y las conclusiones.
 
 ## 2. Estado del arte
 
-<!-- Extensión objetivo: 1½-2 páginas (~600-750 palabras + tabla). OBLIGATORIO: tabla comparativa o línea de tiempo (Tabla 1 abajo). -->
-
 ### 2.1. Evolución de la telemetría de red
 
-Texto introductorio (3-4 líneas): la progresión no es un reemplazo sino una acumulación de capas; cada una resolvió una limitación de la anterior y abrió un nuevo problema de seguridad. Remitir a la Tabla 1 y a la Figura 1.
+La telemetría evolucionó por acumulación de capas: cada una resolvió una limitación de la anterior y abrió un problema de seguridad nuevo (Tabla 1). El eje de la evolución es doble: la unidad de observación se acerca a la aplicación y al kernel, y el dato pasa del sondeo (*pull*) a la emisión por eventos (*push*). Cassagnes et al. (2020) documentan el auge de eBPF como alternativa no intrusiva para monitorear el desempeño de las aplicaciones.
 
-Tabla 1: Evolución de la telemetría de red y la observabilidad (de monitoreo reactivo a AIOps)
+**Tabla 1:** Evolución de la telemetría de red y la observabilidad, del monitoreo reactivo al AIOps
 
-| Era / año | Tecnología (referencia) | Modelo | Granularidad | Qué resuelve | Limitación | Implicancia de seguridad |
-|-----------|-------------------------|--------|--------------|--------------|------------|--------------------------|
-| 1988-1990 (SNMPv1: RFC 1157, mayo 1990) [1] | SNMP v1/v2c | Pull (polling del NMS al agente, UDP) + traps asíncronos | Contadores de interfaz/dispositivo (MIB), sondeo típico de minutos | Gestión y monitoreo estandarizado y multi-vendor de dispositivos | Sin contexto de flujo ni de aplicación; el polling pierde picos entre muestras; MIBs rígidas | Autenticación débil basada en "community string" en texto claro; superficie de exposición si se deja abierto en la red |
-| 2002 (SNMPv3: RFC 3411-3418) [2] | SNMPv3 (STD 62) | Pull + traps/informs | Igual que v1/v2c | Agrega autenticación y privacidad al mensaje (modelo de seguridad basado en usuario) y control de acceso por vista | Complejidad de configuración; sigue limitada al modelo de polling y a MIBs | Mejora el control de acceso y la confidencialidad del canal de gestión; su adopción real es desigual |
-| 2004 (NetFlow v9: RFC 3954) [3] → 2013 (IPFIX: RFC 7011, STD 77) [4] | NetFlow v9 / IPFIX | Push (el exportador envía registros de flujo al colector) | Flujo (5-tupla + contadores), basado en plantillas | Visibilidad de quién habla con quién y cuánto, sin captura de paquetes completos | Sin contenido ni semántica de aplicación; muestreo y timeouts de caché retrasan/atenúan eventos | Base para forense y detección de escaneos, DDoS y exfiltración; el canal de exportación requiere protegerse (TLS/DTLS en IPFIX) |
-| Mediados de 2010s (OpenConfig; spec v0.10.0, mayo 2023) [6] | gNMI / telemetría en streaming | Push por suscripción (STREAM con ON_CHANGE o SAMPLE sobre gRPC) | Hoja del modelo YANG, intervalos de nanosegundos o por cambio | Telemetría de baja latencia, modelada y orientada a eventos; unifica configuración y telemetría | Requiere soporte del equipamiento y modelos YANG/OpenConfig; cubre dispositivos, no aplicaciones | Canal gRPC con TLS y autenticación por RPC; amplía la superficie de gestión (acceso de escritura vía Set) |
-| 2019-presente (proyecto CNCF; OTLP con trazas, métricas y logs estables) [7][24] | OpenTelemetry (OTLP) | Push (SDK/agente → Collector → backend), con opción de pull vía receptores | Señal de aplicación: traza/span, métrica con atributos, log correlacionado | Estándar abierto y vendor-neutral para métricas, trazas y logs correlacionados; el Collector desacopla fuente de destino | Instrumentación del código o agentes; cardinalidad y costo; el perfilado aún está en desarrollo | El Collector concentra datos sensibles: requiere TLS/mTLS, redacción de PII y endpoints acotados [18] |
-| 2014-presente (eBPF en Linux; ISA estandarizada en RFC 9669, oct. 2024) [5][8] | eBPF (Cilium/Hubble, Tetragon, Falco, OBI) | Push desde el kernel hacia agentes en espacio de usuario | Evento de kernel: syscall, paquete, conexión, proceso | Observabilidad de red y de seguridad sin modificar aplicaciones ni cargar módulos del kernel, con verificación previa del programa | Requiere kernel/privilegios adecuados; dificultad de depuración; el verificador acota pero no elimina el riesgo | Visibilidad profunda y enforcement en línea [16][17]; los programas eBPF con privilegios son a su vez un vector a controlar |
-| 2019-presente (AIOps; relevamiento en 2021) [10][9] | AIOps (detección de anomalías con ML; RCA asistido por LLM) | Analítica sobre datos ya recolectados (batch o casi tiempo real) | Serie temporal por métrica y correlación entre señales | Detecta patrones sutiles que no cruzan umbrales; reduce ruido; propone causa raíz | Falsos positivos, falta de explicabilidad, necesidad de datos etiquetados; los LLM pueden alucinar [13] | Las anomalías son señales de ataque; el modelo y sus datos de entrenamiento son un nuevo activo a proteger (envenenamiento, fuga de datos) |
-
-Notas para la redacción de la tabla:
-- Verificar el año de la primera versión de gNMI y el año de introducción de eBPF en el kernel antes de entregar (la tabla usa rangos prudentes; los años exactos no están respaldados por una de las referencias verificadas).
-- Mantener la Tabla 1 en una sola hoja (fuente 9-10 pt es aceptable en tablas; el texto corrido va en 12 pt).
+| Hito temporal | Tecnología | Modelo | Qué resuelve | Limitación | Seguridad |
+|---|---|---|---|---|---|
+| 1990 | SNMPv1 (Case et al., 1990) | Pull: el NMS sondea al agente; MIB | Gestión estandarizada y multivendor | Sin contexto de flujo ni de aplicación | *Community string* en texto claro |
+| 1998; STD 62 en 2002 | SNMPv3 (Harrington et al., 2002) | Pull, con *informs* | Autenticación y privacidad por usuario (Blumenthal y Wijnen, 2002) | Configuración compleja; atado al sondeo | Canal confidencial; adopción desigual |
+| 2004-2013 | NetFlow v9 e IPFIX (Claise, 2004; Claise et al., 2013) | Push: registros de flujo (5-tupla) | Quién habla con quién, sin capturar paquetes | Sin semántica de aplicación; el muestreo atenúa eventos | Base forense y de detección de escaneos |
+| 2016 en adelante | gNMI (OpenConfig, s.f.) | Push por suscripción sobre gRPC; YANG | Telemetría modelada y de baja latencia | Exige soporte del equipo y modelos YANG | gRPC con TLS; *Set* amplía la superficie |
+| 2019 en adelante (graduado en 2026) | OpenTelemetry / OTLP (OpenTelemetry, s.f.-b; Cloud Native Computing Foundation [CNCF], s.f.) | Push al Collector: trazas, métricas y logs | Estándar abierto de tres señales | Instrumentación; cardinalidad y costo | El Collector concentra datos sensibles |
+| ISA estandarizada en 2024 | eBPF: Cilium, Tetragon, Falco (eBPF.io, s.f.; Thaler, 2024) | Push desde el kernel: syscall, paquete | Visibilidad sin modificar aplicaciones | Requiere kernel y privilegios | *Enforcement* en línea (Cilium, s.f.; Tetragon, s.f.); programas privilegiados |
+| 2019 en adelante | AIOps: ML y LLM (Dang et al., 2019; Notaro et al., 2021) | Analítica sobre datos ya recolectados | Patrones bajo el umbral; causas probables | Falsos positivos; los LLM pueden errar (Xu et al., 2025) | Anomalías como señales de ataque; proteger el modelo |
 
 ### 2.2. Herramientas dominantes en la industria
 
-- **Métricas y alertas:** Prometheus (modelo pull, PromQL, reglas de alerta por umbral) + Grafana (visualización); blackbox_exporter para sondeo activo (HTTP, TCP, ICMP) y node_exporter para el host. Es el baseline "tradicional" que usa el Acto 1 de la demo.
-- **Telemetría unificada:** OpenTelemetry (SDK + Collector, OTLP) con backends Jaeger/Tempo/Loki; el Collector expone sus propias métricas a Prometheus.
-- **eBPF en redes y seguridad:** Cilium + Hubble (observabilidad de flujos L3-L7 y políticas de red) [16], Tetragon (observabilidad y enforcement de runtime en kernel) [17], Falco (detección de amenazas en tiempo de ejecución).
-- **Plataformas comerciales vs. abiertas:** Datadog, Dynatrace (Davis AI), New Relic, Splunk frente a Grafana/Prometheus/Loki, SigNoz, OpenObserve, Netdata (tomar la comparación de IntellOps [25] y citarla como análisis propio de ese proyecto, no como dato verificado de mercado: los costos del cuadro de IntellOps son estimaciones y no deben citarse como cifras).
-- **Detección de anomalías en producción:** Isolation Forest [14] como técnica liviana y no supervisada para series de métricas; alternativas: descomposición estacional, z-score dinámico, autoencoders.
+Prometheus es una herramienta de código abierto ampliamente adoptada para métricas y alertas por umbral (Prometheus, s.f.), y se complementa con Grafana y *blackbox_exporter* (sondeo HTTP, TCP e ICMP). OpenTelemetry aporta SDK, Collector y OTLP, con trazas, métricas y logs estables (OpenTelemetry, s.f.-b). En eBPF se destacan Cilium con Hubble, que da visibilidad de la comunicación de red (Cilium, s.f.); Tetragon, que observa eventos de seguridad y aplica filtros y bloqueos dentro del kernel (Tetragon, s.f.); y Falco, para detección de amenazas en ejecución (CNCF, 2024). Para anomalías en series de métricas, Isolation Forest (Liu et al., 2008) es una técnica liviana y no supervisada que aísla las observaciones atípicas con árboles aleatorios.
 
 ### 2.3. Limitaciones del estado actual
 
-- Umbrales estáticos: no se adaptan a estacionalidad (picos horarios) ni detectan degradación gradual o cambios de correlación entre métricas ("anomalías dentro del rango").
-- Silos de datos: SNMP, flujos, métricas, trazas y logs viven en herramientas distintas; la correlación es manual y lenta (MTTR alto) [9][10].
-- Costo y cardinalidad de OpenTelemetry a escala; instrumentación manual de aplicaciones heredadas.
-- Brecha en explicabilidad: un score de anomalía no es una causa raíz; el operador no experto no sabe qué hacer con él.
-- Seguridad de la propia telemetría: endpoints OTLP abiertos, PII en atributos, ausencia de mTLS [18].
-
-### 2.4. Figura 1 (diagrama original, obligatorio en el template)
-
-- Figura 1: línea de tiempo/arquitectura (a dibujar en `diagramas/` como SVG): fuentes de telemetría (dispositivos, hosts/kernel, aplicaciones) → OTel Collector → Prometheus/Grafana → detector ML → explicación LLM. Alt text y leyenda numerada ("Figura 1: ...").
-- Si el tiempo no alcanza, la Tabla 1 cumple el requisito de línea de tiempo/tabla comparativa; la figura cubre el requisito de "al menos un diagrama original".
+Los umbrales estáticos no se adaptan a la estacionalidad ni detectan degradaciones graduales. Los datos viven en silos (SNMP, flujos, métricas, trazas y logs), por lo que, a criterio de los autores, la correlación es manual y eleva el tiempo de resolución; la literatura clasifica los métodos de AIOps para gestionar fallas (cf. Notaro et al., 2021). A escala, OpenTelemetry enfrenta costo y cardinalidad, y un puntaje de anomalía no es una causa raíz. La propia telemetría es además vulnerable: *endpoints* OTLP abiertos, datos sensibles (por ejemplo, tokens o números de tarjeta) en los atributos y falta de cifrado y autenticación entre agentes y Collector (OpenTelemetry, s.f.-a).
 
 ## 3. Innovaciones emergentes
 
-<!-- Extensión objetivo: 1-1½ páginas (~400-550 palabras). Papers y anuncios de los últimos 3 años (2023-2026). Cada ítem: qué es, por qué es innovador, qué problema resuelve, referencia verificada. -->
+### 3.1. Telemetría: perfilado, instrumentación sin código y estandarización
 
-Criterio de selección: solo se listan hitos con fuente verificada; el resto del material de IntellOps [25] se usa como contexto, no como evidencia de innovación.
+En marzo de 2024 OpenTelemetry anunció el soporte de perfilado continuo (señal de perfiles), con el compromiso de Elastic de donar su agente eBPF (OpenTelemetry, 2024b), aceptado en junio de 2024 (OpenTelemetry, 2024a); en 2026 la señal llegó a alfa pública, aún sin aptitud para cargas críticas (OpenTelemetry, 2026). En 2025 Grafana anunció la donación de Beyla a OpenTelemetry (en proceso a la fecha del anuncio), dando origen a OpenTelemetry eBPF Instrumentation (OBI), que instrumenta aplicaciones compiladas sin modificar su código (Grcevski, 2025) y conecta eBPF con OTLP. En octubre de 2024 el IETF estandarizó el conjunto de instrucciones de BPF (RFC 9669), lo que aporta portabilidad (Thaler, 2024). El ecosistema también maduró: Cilium se graduó en la CNCF en octubre de 2023 (CNCF, 2023), Falco en febrero de 2024, tras una auditoría de seguridad de terceros (CNCF, 2024), y OpenTelemetry en mayo de 2026 (CNCF, s.f.), lo que indica adopción y gobernanza, no ausencia de riesgos.
 
-1. **Perfilado continuo como cuarta señal de OpenTelemetry (2024-2026).** Anuncio de soporte de profiling en 2024 (modelo de datos de perfiles enlazado a trazas/métricas/logs; donación del agente eBPF de Elastic y del perfilador .NET de Splunk) [19]; la señal de perfiles llegó a alfa pública en 2026 y todavía no es apta para producción crítica [20]. Problema que resuelve: pasar del síntoma (latencia alta) al código responsable sin instrumentación manual. Limitación: estado alfa.
-2. **OpenTelemetry eBPF Instrumentation (OBI), mayo 2025.** Grafana donó Beyla a OpenTelemetry: instrumentación de aplicaciones compiladas sin recompilar ni cambiar código, con métricas HTTP, trazas distribuidas, métricas de red y soporte de gRPC, SQL, Redis y Kafka [21]. Problema que resuelve: observabilidad "zero-code" de servicios heredados y de terceros. Conecta eBPF con el estándar OTLP (convergencia de dos líneas de la Tabla 1).
-3. **Estandarización del ISA de BPF (RFC 9669, octubre 2024).** El IETF publicó el conjunto de instrucciones de BPF como Proposed Standard [5]. Por qué importa: portabilidad entre sistemas operativos y plataformas, y base común para herramientas de verificación y seguridad.
-4. **Madurez institucional del ecosistema (CNCF).** Cilium se graduó en octubre de 2023 [22], Falco en febrero de 2024 (requirió auditoría de seguridad de terceros) [23] y OpenTelemetry en mayo de 2026 [24]. Lectura crítica: la graduación indica adopción y gobernanza, no ausencia de riesgos; conectar con la sección de seguridad.
-5. **LLM para RCA de incidentes (2023-2025).** Ahmed et al. evaluaron LLM para recomendar causa raíz y mitigación sobre más de 40 000 incidentes de Microsoft [11]; RCACopilot (EuroSys 2024) combina recolección de diagnósticos con un LLM para predecir la categoría de causa raíz y redactar la explicación [12]; el benchmark OpenRCA (ICLR 2025, 335 fallas, más de 68 GB de telemetría) muestra que, aun con un agente diseñado a medida, el mejor modelo resolvió solo el 11,34 % de los casos [13]. Lectura crítica: el RCA con LLM es prometedor pero está lejos de ser confiable sin verificación humana; justifica el diseño del Acto 3 (LLM local que explica con evidencia de las métricas, y el operador decide).
-6. **Seguridad de la telemetría como tema emergente.** Guías oficiales de OpenTelemetry sobre endpoints acotados, cifrado/autenticación y procesador `redaction` para enmascarar datos sensibles antes de exportar [18]; enforcement en kernel con Tetragon (filtros y acciones dentro del kernel, no solo alertas) [17]. Conectar con el escenario de falla de la demo (Collector sin mTLS).
+### 3.2. Analítica operativa: LLM para el análisis de causa raíz
 
-Cierre de la sección (2-3 líneas): patrón común = convergencia (eBPF + OTLP), menos instrumentación manual, y analítica asistida con límites conocidos.
+Ahmed et al. (2023) evaluaron LLM para recomendar causa raíz y mitigación sobre más de 40 000 incidentes de Microsoft, y RCACopilot (Chen et al., 2024) combina diagnósticos con un LLM para predecir la categoría de la causa y explicarla. El contrapeso es OpenRCA: sobre 335 fallas y más de 68 GB de telemetría, el mejor resultado del artículo original resolvió solo el 11,34 % de los casos, aun con un agente diseñado a medida (Xu et al., 2025). De ello los autores infieren que el análisis de causa raíz con LLM es prometedor, pero no confiable sin verificación humana.
+
+### 3.3. Seguridad de la telemetría como tema emergente
+
+Las guías oficiales de OpenTelemetry recomiendan acotar las direcciones de los receptores, configurar cifrado y autenticación, y usar el procesador *redaction* para enmascarar atributos sensibles antes de exportar (OpenTelemetry, s.f.-a). Además, el verificador de eBPF garantiza que un programa es seguro de ejecutar, pero no qué hace (eBPF.io, s.f.); controlar qué programas se cargan y con qué privilegios sigue siendo tarea del operador.
+
+### 3.4. Caso ilustrativo: umbrales, aprendizaje automático y telemetría protegida
+
+Se construyó una demostración de laboratorio en tres actos, con contenedores y sin conexión a internet (Figura 1): umbrales con Prometheus y Grafana; detección con Isolation Forest (Liu et al., 2008); y explicación de causa raíz con un LLM local (*llama3.2:1b* sobre Ollama, de alrededor de 1.200 millones de parámetros) y telemetría protegida con mTLS. Ante un retardo inyectado y un escaneo lento de puertos, el detector alcanzó puntajes de 0,785 y 0,744 (escala de 0 a 1) con cero alertas por umbral. Con mTLS, el Collector rechazó la telemetría falsa y aceptó al agente legítimo. Advertencias: son valores de una única corrida con tráfico sintético; el LLM de 1B a veces afirma lo que la evidencia no respalda; mTLS no cubre certificados robados; y la telemetría falsa engañó al operador, no al detector.
+
+![Diagrama de arquitectura de la demostración en tres actos. Acto 1: cliente, servicios web y api, exporters, Prometheus con umbrales y Grafana. Acto 2: el atacante 1 realiza un escaneo lento de puertos hacia los servicios y el detector de anomalías con Isolation Forest lo detecta. Acto 3: un módulo de causa raíz con LLM local explica el incidente en Grafana, y el atacante 2, que envía telemetría falsa sin credenciales, es rechazado en la puerta mTLS del OpenTelemetry Collector, mientras un agente legítimo con certificado de cliente sí ingresa.](../diagramas/figura-1-arquitectura.svg)
+
+**Figura 1:** Arquitectura de la demostración en tres actos: (1) monitoreo por umbrales, (2) detección con aprendizaje automático y (3) explicación con LLM local y protección de la telemetría con mTLS. Elaboración propia.
 
 ## 4. Oportunidades y desafíos
 
-<!-- Extensión objetivo: 1 página (~350-400 palabras). Problemas abiertos, brechas, oportunidades de investigación y desarrollo profesional. Conectar con el perfil de la carrera. -->
+**Detección predictiva y explicable.** Pasar de «anomalía detectada» a «causa probable y evidencia» es, a criterio de los autores, el principal problema abierto. El caso de la sección 3.4 mostró que un puntaje de anomalía alerta cuando los umbrales callan, pero no dice qué falló, y que la explicación de un modelo pequeño debe contrastarse con evidencia medida. Además, el desempeño sobre tráfico sintético sirve para comparar modelos, no para anticipar una red real: predecir una degradación antes de que ocurra exige series largas y etiquetadas de redes reales.
 
-- **Detección predictiva y explicable:** pasar de "anomalía detectada" a "causa probable y evidencia"; evaluación honesta (datos sintéticos vs. reales; los F1 de datos sintéticos sirven para comparar modelos, no para prometer rendimiento de producción; ver limitaciones del generador sintético de IntellOps [25]).
-- **LLM local y verificable:** modelos cuantizados corriendo en CPU/edge, sin enviar telemetría a APIs externas (privacidad y costo); necesidad de anclar la respuesta en evidencia (métricas y trazas) y de medir alucinaciones [13].
-- **Seguridad del pipeline de observabilidad:** mTLS entre agentes y Collector, redacción de PII por diseño, minimización de datos, control del privilegio de los agentes eBPF; amenaza de "envenenamiento" de métricas que engaña al detector.
-- **Brechas de datos:** falta de datasets públicos etiquetados de tráfico de red combinado con métricas de aplicación; costo de etiquetar incidentes.
-- **Estandarización incompleta:** perfiles en alfa; convenciones semánticas aún en evolución; interoperabilidad con telemetría de dispositivos de red (SNMP/gNMI → OTLP).
-- **Hardware modesto / entornos académicos:** operar la solución con pocos recursos y costo cero (nicho identificado por IntellOps [25]).
-- **Perfil profesional (conexión con la carrera):** roles de SRE/NetDevOps/seguridad de redes; habilidades: modelado de datos de red, Linux/eBPF, Prometheus/OpenTelemetry, fundamentos de ML y de seguridad. Mencionar oportunidades de investigación y de proyectos finales.
+**LLM locales y verificables.** Operar modelos cuantizados en CPU, sin enviar telemetría a terceros, mejora la privacidad y reduce el costo, y es un objetivo de IntellOps (Equipo InfraIT GIDAS, 2026), no un resultado demostrado aquí. El desafío es anclar cada respuesta en evidencia verificable y medir de forma sistemática las alucinaciones, de modo que el operador pueda auditar el origen de cada afirmación. Los resultados de OpenRCA (Xu et al., 2025) indican que el margen de mejora es amplio.
+
+**Seguridad del pipeline.** Se considera que aún falta generalizar el cifrado y la autenticación mutua entre agentes y Collector, la redacción de datos sensibles (por ejemplo, tokens o números de tarjeta) por diseño y el control del privilegio de los agentes eBPF (OpenTelemetry, s.f.-a; eBPF.io, s.f.). La sección 3.4 mostró que mTLS no cubre certificados robados; a criterio de los autores, convendría combinarlo con rotación y revocación de certificados y con la detección de telemetría anómala en el propio Collector.
+
+**Datos y estandarización.** A criterio de los autores, faltan conjuntos públicos etiquetados que combinen tráfico de red con métricas de aplicación, lo que dificulta comparar métodos de detección de forma reproducible. Los perfiles siguen en alfa (OpenTelemetry, 2026) y llevar la telemetría de dispositivos (SNMP, gNMI) a OTLP exige trabajo de conversión de modelos de datos.
+
+**Perfil profesional.** Estas brechas encajan con el perfil de la Ingeniería en Sistemas de Información orientado a la operación y la seguridad de redes. Los roles de ingeniería de confiabilidad (SRE), NetDevOps y seguridad de redes demandan modelado de datos de red, Linux y eBPF, Prometheus y OpenTelemetry, y fundamentos de aprendizaje automático y de seguridad. Se considera que integrar estas áreas, y no dominar una herramienta aislada, distingue a quien podrá diseñar y operar plataformas de observabilidad confiables.
 
 ## 5. Conclusiones
 
-<!-- Extensión objetivo: ½ página (~180-200 palabras). Síntesis, proyección 3-5 años, impacto esperado en redes, operación y seguridad. -->
+La telemetría evolucionó de contadores sondeados a eventos de kernel y señales correlacionadas con estándares abiertos, y el aprendizaje automático agrega valor donde fallan los umbrales, con límites medidos: el mejor resultado de OpenRCA en el artículo original es 11,34 % (Xu et al., 2025). El hallazgo central es que observabilidad y seguridad convergen: los mismos datos sirven para operar y detectar ataques, y el pipeline de telemetría es un activo crítico.
 
-- **Síntesis:** la telemetría evolucionó de contadores por polling a eventos de kernel y señales correlacionadas con estándares abiertos; la analítica (ML y LLM) agrega valor donde los umbrales fallan, con límites medidos (11,34 % en OpenRCA [13]).
-- **Hallazgo central:** observabilidad y seguridad convergen: los mismos datos sirven para operar y para detectar ataques, y el pipeline de telemetría debe tratarse como activo crítico.
-- **Proyección 3-5 años (marcar como proyección propia, no como dato):** consolidación de OTLP y de OBI como base común; perfiles estables; detección de anomalías integrada en el Collector o en la plataforma; LLM locales como asistentes de diagnóstico con verificación.
-- **Impacto esperado:** Redes (visibilidad L3-L7 sin instrumentar), Operación (menor MTTR, menos ruido), Seguridad (detección temprana y telemetría protegida con mTLS y redacción).
-- **Cierre:** vínculo con la demo de la Feria (Acto 1 verde pero ciego, Acto 2 detección por ML, Acto 3 explicación y falla de mTLS) como evidencia de que el contraste umbral vs. ML es reproducible con recursos mínimos.
+Como proyección propia a 3-5 años, y no como dato, se espera la consolidación de OTLP y OBI como base común, perfiles estables, detección de anomalías integrada en el Collector y LLM locales como asistentes de diagnóstico con verificación humana. El impacto abarca las tres áreas: visibilidad de las capas 3 a 7 sin instrumentar aplicaciones (redes), menor tiempo de resolución y menos ruido (operación), y detección temprana con telemetría protegida (seguridad). El caso ilustrativo indica que las ideas centrales de detección, explicación y mTLS pueden reproducirse a pequeña escala y sin conexión a internet, aunque no que escalen a producción.
 
 ## Referencias
 
-<!-- Mínimo 6 exigidas por el template (modalidad B): aquí 25, todas verificadas. Incluye >=1 paper académico ([9]-[15]), >=1 documentación técnica oficial ([8], [16]-[18]) y >=1 RFC ([1]-[5]). Formato IEEE consistente. "Accedido" = fecha de verificación. -->
+Ahmed, T., Ghosh, S., Bansal, C., Zimmermann, T., Zhang, X., y Rajmohan, S. (2023). Recommending root-cause and mitigation steps for cloud incidents using large language models. En *2023 IEEE/ACM 45th International Conference on Software Engineering (ICSE)* (pp. 1737-1749). IEEE. https://doi.org/10.1109/ICSE48619.2023.00149
 
-[1] J. D. Case, M. Fedor, M. L. Schoffstall y J. Davin, "Simple Network Management Protocol (SNMP)," IETF, RFC 1157, may. 1990. [En línea]. Disponible: https://datatracker.ietf.org/doc/html/rfc1157
+Blumenthal, U., y Wijnen, B. (2002). *User-based Security Model (USM) for version 3 of the Simple Network Management Protocol (SNMPv3)* (RFC 3414; STD 62). Internet Engineering Task Force. https://datatracker.ietf.org/doc/html/rfc3414
 
-[2] D. Harrington, R. Presuhn y B. Wijnen, "An Architecture for Describing Simple Network Management Protocol (SNMP) Management Frameworks," IETF, RFC 3411 (STD 62), dic. 2002. [En línea]. Disponible: https://datatracker.ietf.org/doc/html/rfc3411
+Case, J. D., Fedor, M., Schoffstall, M. L., y Davin, J. (1990). *A Simple Network Management Protocol (SNMP)* (RFC 1157). Internet Engineering Task Force. https://datatracker.ietf.org/doc/html/rfc1157
 
-[3] B. Claise, Ed., "Cisco Systems NetFlow Services Export Version 9," IETF, RFC 3954, oct. 2004. [En línea]. Disponible: https://datatracker.ietf.org/doc/html/rfc3954
+Cassagnes, C., Trestioreanu, L., Joly, C., y State, R. (2020). The rise of eBPF for non-intrusive performance monitoring. En *NOMS 2020 - 2020 IEEE/IFIP Network Operations and Management Symposium* (pp. 1-7). IEEE. https://doi.org/10.1109/NOMS47738.2020.9110434
 
-[4] B. Claise, Ed., B. Trammell, Ed. y P. Aitken, "Specification of the IP Flow Information Export (IPFIX) Protocol for the Exchange of Flow Information," IETF, RFC 7011 (STD 77), sep. 2013. [En línea]. Disponible: https://datatracker.ietf.org/doc/html/rfc7011
+Chen, Y., Xie, H., Ma, M., Kang, Y., Gao, X., Shi, L., Cao, Y., Gao, X., Fan, H., Wen, M., Zeng, J., Ghosh, S., Zhang, X., Zhang, C., Lin, Q., Rajmohan, S., Zhang, D., y Xu, T. (2024). Automatic root cause analysis via large language models for cloud incidents. En *Proceedings of the Nineteenth European Conference on Computer Systems* (pp. 674-688). ACM. https://doi.org/10.1145/3627703.3629553
 
-[5] D. Thaler, Ed., "BPF Instruction Set Architecture (ISA)," IETF, RFC 9669, oct. 2024. [En línea]. Disponible: https://datatracker.ietf.org/doc/html/rfc9669
+Cilium. (s.f.). *Introduction to Cilium & Hubble*. Cilium Documentation. Recuperado el 10 de noviembre de 2026 de https://docs.cilium.io/en/stable/overview/intro/
 
-[6] OpenConfig, "gRPC Network Management Interface (gNMI)," especificación v0.10.0, 25 may. 2023. [En línea]. Disponible: https://github.com/openconfig/reference/blob/master/rpc/gnmi/gnmi-specification.md
+Claise, B. (Ed.). (2004). *Cisco Systems NetFlow Services Export Version 9* (RFC 3954). Internet Engineering Task Force. https://datatracker.ietf.org/doc/html/rfc3954
 
-[7] OpenTelemetry Authors, "OTLP Specification 1.11.1," OpenTelemetry. [En línea]. Disponible: https://opentelemetry.io/docs/specs/otlp/ (accedido nov. 2026).
+Claise, B. (Ed.), Trammell, B. (Ed.), y Aitken, P. (2013). *Specification of the IP Flow Information Export (IPFIX) Protocol for the Exchange of Flow Information* (RFC 7011; STD 77). Internet Engineering Task Force. https://datatracker.ietf.org/doc/html/rfc7011
 
-[8] eBPF.io, "What is eBPF? An Introduction and Deep Dive into the eBPF Technology." [En línea]. Disponible: https://ebpf.io/what-is-ebpf/ (accedido nov. 2026).
+Cloud Native Computing Foundation. (s.f.). *OpenTelemetry* [Página de proyecto]. Recuperado el 10 de noviembre de 2026 de https://www.cncf.io/projects/opentelemetry/
 
-[9] P. Notaro, J. Cardoso y M. Gerndt, "A Survey of AIOps Methods for Failure Management," *ACM Trans. Intell. Syst. Technol.*, vol. 12, n.º 6, art. 81, nov. 2021, doi: 10.1145/3483424.
+Cloud Native Computing Foundation. (2023, 11 de octubre). *Cloud Native Computing Foundation announces Cilium graduation* [Comunicado de prensa]. https://cncf.io/announcements/2023/10/11/cloud-native-computing-foundation-announces-cilium-graduation/
 
-[10] Y. Dang, Q. Lin y P. Huang, "AIOps: Real-World Challenges and Research Innovations," en *Proc. IEEE/ACM 41st Int. Conf. Softw. Eng.: Companion Proceedings (ICSE-Companion)*, Montreal, Canadá, 2019, pp. 4-5, doi: 10.1109/ICSE-Companion.2019.00023.
+Cloud Native Computing Foundation. (2024, 29 de febrero). *Cloud Native Computing Foundation announces Falco graduation* [Comunicado de prensa]. https://cncf.io/announcements/2024/02/29/cloud-native-computing-foundation-announces-falco-graduation
 
-[11] T. Ahmed, S. Ghosh, C. Bansal, T. Zimmermann, X. Zhang y S. Rajmohan, "Recommending Root-Cause and Mitigation Steps for Cloud Incidents using Large Language Models," en *Proc. 45th Int. Conf. Softw. Eng. (ICSE)*, 2023, arXiv:2301.03797. [En línea]. Disponible: https://arxiv.org/abs/2301.03797
+Dang, Y., Lin, Q., y Huang, P. (2019). AIOps: Real-world challenges and research innovations. En *2019 IEEE/ACM 41st International Conference on Software Engineering: Companion Proceedings (ICSE-Companion)* (pp. 4-5). IEEE. https://doi.org/10.1109/ICSE-Companion.2019.00023
 
-[12] Y. Chen *et al.*, "Automatic Root Cause Analysis via Large Language Models for Cloud Incidents," en *Proc. 19th European Conf. Computer Systems (EuroSys '24)*, Atenas, Grecia, abr. 2024, doi: 10.1145/3627703.3629553, arXiv:2305.15778.
+eBPF.io. (s.f.). *What is eBPF? An introduction and deep dive into the eBPF technology*. Recuperado el 10 de noviembre de 2026 de https://ebpf.io/what-is-ebpf/
 
-[13] J. Xu *et al.*, "OpenRCA: Can Large Language Models Locate the Root Cause of Software Failures?," en *Proc. Int. Conf. Learning Representations (ICLR)*, 2025. [En línea]. Disponible: https://proceedings.iclr.cc/paper_files/paper/2025/file/d29b8d53678015079e1d245c023e49d2-Paper-Conference.pdf
+Equipo InfraIT GIDAS. (2026). *IntellOps: Sistema de Observabilidad Predictiva UX-Céntrica + AI/LLM Open-Source* [Repositorio de código]. GitHub. https://github.com/infraitgidas/intellops
 
-[14] F. T. Liu, K. M. Ting y Z.-H. Zhou, "Isolation Forest," en *Proc. 8th IEEE Int. Conf. Data Mining (ICDM)*, Pisa, Italia, 2008, pp. 413-422, doi: 10.1109/ICDM.2008.17.
+Grcevski, N. (2025, 8 de mayo). *Introducing OpenTelemetry eBPF Instrumentation: Why we donated Grafana Beyla to OpenTelemetry* [Entrada de blog]. Grafana Labs. https://grafana.com/blog/2025/05/07/opentelemetry-ebpf-instrumentation-beyla-donation/
 
-[15] C. Cassagnes, L. A. Trestioreanu, C. Joly y R. State, "The rise of eBPF for non-intrusive performance monitoring," en *Proc. NOMS 2020 - IEEE/IFIP Network Operations and Management Symposium*, Budapest, Hungría, abr. 2020. [En línea]. Disponible: https://orbilu.uni.lu/handle/10993/43564
+Harrington, D., Presuhn, R., y Wijnen, B. (2002). *An Architecture for Describing Simple Network Management Protocol (SNMP) Management Frameworks* (RFC 3411; STD 62). Internet Engineering Task Force. https://datatracker.ietf.org/doc/html/rfc3411
 
-[16] Cilium Authors, "Introduction to Cilium & Hubble," Cilium Documentation. [En línea]. Disponible: https://docs.cilium.io/en/stable/overview/intro/ (accedido nov. 2026).
+Liu, F. T., Ting, K. M., y Zhou, Z.-H. (2008). Isolation forest. En *2008 Eighth IEEE International Conference on Data Mining* (pp. 413-422). IEEE. https://doi.org/10.1109/ICDM.2008.17
 
-[17] Tetragon Authors, "Overview | Tetragon - eBPF-based Security Observability and Runtime Enforcement," Tetragon Documentation. [En línea]. Disponible: https://tetragon.io/docs/overview/ (accedido nov. 2026).
+Notaro, P., Cardoso, J., y Gerndt, M. (2021). A survey of AIOps methods for failure management. *ACM Transactions on Intelligent Systems and Technology, 12*(6), Artículo 81. https://doi.org/10.1145/3483424
 
-[18] OpenTelemetry Authors, "Collector configuration best practices," OpenTelemetry Documentation. [En línea]. Disponible: https://opentelemetry.io/docs/security/config-best-practices/ (accedido nov. 2026).
+OpenConfig. (s.f.). *gRPC Network Management Interface (gNMI)* (versión 0.10.0). Recuperado el 10 de noviembre de 2026 de https://github.com/openconfig/reference/blob/master/rpc/gnmi/gnmi-specification.md
 
-[19] OpenTelemetry Authors, "OpenTelemetry announces support for profiling," OpenTelemetry Blog, 2024. [En línea]. Disponible: https://opentelemetry.io/blog/2024/profiling/ (accedido nov. 2026).
+OpenTelemetry. (s.f.-a). *Collector configuration best practices*. OpenTelemetry Documentation. Recuperado el 10 de noviembre de 2026 de https://opentelemetry.io/docs/security/config-best-practices/
 
-[20] OpenTelemetry Authors, "OpenTelemetry Profiles Enters Public Alpha," OpenTelemetry Blog, 2026. [En línea]. Disponible: https://opentelemetry.io/blog/2026/profiles-alpha/ (accedido nov. 2026).
+OpenTelemetry. (s.f.-b). *OTLP specification 1.11.1*. OpenTelemetry Documentation. Recuperado el 10 de noviembre de 2026 de https://opentelemetry.io/docs/specs/otlp/
 
-[21] N. Grcevski, "Introducing OpenTelemetry eBPF Instrumentation: Why we donated Grafana Beyla to OpenTelemetry," Grafana Labs Blog, 8 may. 2025. [En línea]. Disponible: https://grafana.com/blog/2025/05/07/opentelemetry-ebpf-instrumentation-beyla-donation/
+OpenTelemetry. (2024a, 7 de junio). *Elastic contributes its continuous profiling agent to OpenTelemetry* [Entrada de blog]. OpenTelemetry Blog. https://opentelemetry.io/blog/2024/elastic-contributes-continuous-profiling-agent/
 
-[22] Cloud Native Computing Foundation, "Cloud Native Computing Foundation Announces Cilium Graduation," 11 oct. 2023. [En línea]. Disponible: https://cncf.io/announcements/2023/10/11/cloud-native-computing-foundation-announces-cilium-graduation/
+OpenTelemetry. (2024b, 19 de marzo). *OpenTelemetry announces support for profiling* [Entrada de blog]. OpenTelemetry Blog. https://opentelemetry.io/blog/2024/profiling/
 
-[23] Cloud Native Computing Foundation, "Cloud Native Computing Foundation Announces Falco Graduation," 29 feb. 2024. [En línea]. Disponible: https://cncf.io/announcements/2024/02/29/cloud-native-computing-foundation-announces-falco-graduation
+OpenTelemetry. (2026). *OpenTelemetry Profiles enters public alpha* [Entrada de blog]. OpenTelemetry Blog. https://opentelemetry.io/blog/2026/profiles-alpha/
 
-[24] Cloud Native Computing Foundation, "OpenTelemetry," página de proyecto (nivel de madurez: Graduated desde el 11 may. 2026). [En línea]. Disponible: https://www.cncf.io/projects/opentelemetry/ (accedido nov. 2026).
+Prometheus. (s.f.). *Overview*. Prometheus Documentation. Recuperado el 10 de noviembre de 2026 de https://prometheus.io/docs/introduction/overview/
 
-[25] GIDAS (Grupo de Investigación, UTN FRLP), "IntellOps: plataforma de observabilidad predictiva en recursos escasos," repositorio institucional, UTN FRLP, 2026. [En línea]. Disponible: https://github.com/infraitgidas/intellops
+Tetragon. (s.f.). *Overview | Tetragon - eBPF-based security observability and runtime enforcement*. Tetragon Documentation. Recuperado el 10 de noviembre de 2026 de https://tetragon.io/docs/overview/
 
-<!--
-NOTA DE VERIFICACIÓN (para el grupo, borrar antes de entregar)
-- Verificadas en línea (nov. 2026): [1]-[5] (datatracker.ietf.org: títulos, autores, fechas, estado), [6] (spec gNMI v0.10.0, 25/05/2023), [7] (OTLP 1.11.1; trazas/métricas/logs estables, perfiles en desarrollo),
-  [8], [16], [17], [18], [19], [20], [21], [22], [23], [24] (páginas oficiales), [9] (DOI 10.1145/3483424), [10] (DOI 10.1109/ICSE-Companion.2019.00023), [11] (arXiv + programa ICSE 2023),
-  [12] (arXiv:2305.15778; DOI de ACM 10.1145/3627703.3629553), [13] (ICLR 2025; 335 fallas, 68 GB; mejor resultado 11,34 %), [14] (DOI 10.1109/ICDM.2008.17), [15] (repositorio ORBilu, NOMS 2020).
-- DESCARTADAS por no poder verificarse o por estar mal citadas:
-  * "Ahmed, T. et al. (2024). Towards Incident Response with Large Language Models. arXiv:2401.08754" (de IntellOps state-of-the-art.md): el identificador arXiv:2401.08754 corresponde a un artículo de física
-    ("Floquet Flux Attachment in Cold Atomic Systems"); la referencia NO es válida. Se reemplazó por [11] (Ahmed et al., ICSE 2023, arXiv:2301.03797), que sí existe.
-  * "Jiang, Y. et al. (2023). LLM-based Root Cause Analysis for Cloud Incidents. ACM SIGOPS" y "Chen, Z. et al. (2024). Auto-Remediation with LLMs: A Case Study. IEEE/ACM ICSE" (IntellOps): no se verificaron; no se usan.
-  * "Notaro, P. et al. (2021). A Systematic Mapping Study on AIOps. J. Systems and Software" (IntellOps): el título/venue es incorrecto; el trabajo real es [9] (ACM TIST) y un preprint "A Systematic Mapping Study in AIOps" (arXiv:2012.09108).
-  * "Schmid, P. et al. (2024). Anomaly Detection in Time Series: A Comprehensive Evaluation. VLDB" (IntellOps): no se verificó; no se usa.
-  * Gartner (2025) Magic Quadrant, CNCF (2026) Cloud Native Survey, Netdata (2025) benchmark: no se verificaron; los costos anuales de plataformas comerciales de IntellOps son estimaciones: no citar como cifras.
-- Datos que NO tienen referencia verificada y deben confirmarse o quitarse antes de entregar: año exacto de la primera versión de gNMI; año de introducción de eBPF en el kernel (2014 / Linux 3.18);
-  datos de fecha de las entradas de blog [19] y [20] (las páginas no muestran fecha en el texto: 2024 por el contexto del anuncio y 2026 por la entrada de URL).
-- Nota: IntellOps indica "OpenTelemetry (CNCF graduated)"; al 2026-11 la página oficial de CNCF lo confirma (graduado el 11 may. 2026). Antes de esa fecha era Incubating: cuidado al citar fuentes anteriores.
--->
+Thaler, D. (Ed.). (2024). *BPF Instruction Set Architecture (ISA)* (RFC 9669). Internet Engineering Task Force. https://datatracker.ietf.org/doc/html/rfc9669
+
+Xu, J., Zhang, Q., Zhong, Z., He, S., Zhang, C., Lin, Q., Pei, D., He, P., Zhang, D., y Zhang, Q. (2025). OpenRCA: Can large language models locate the root cause of software failures? En *The Thirteenth International Conference on Learning Representations (ICLR 2025)*. https://proceedings.iclr.cc/paper_files/paper/2025/file/d29b8d53678015079e1d245c023e49d2-Paper-Conference.pdf
