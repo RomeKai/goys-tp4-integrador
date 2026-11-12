@@ -112,7 +112,7 @@ docker compose -f docker-compose.yml -f docker-compose.act2.yml up -d           
 docker compose -f docker-compose.yml -f docker-compose.act2.yml -f docker-compose.act3.yml up -d          # Actos 1 + 2 + 3 (o: bash scripts/act3.sh up)
 ```
 
-Las cuatro imágenes locales (`goys-demo/tools:1.0.0` con nmap y tc, `goys-demo/detector:1.1.0` con scikit-learn, `goys-demo/rca:1.0.0` y `goys-demo/sender:1.0.0` con curl y openssl) se construyen en `pull-images.sh`, así `pip` y `apk` corren con internet y no hacen falta en la Feria. Todas las imágenes tienen versión fija (sin `latest`). Una vez descargadas o cargadas, el stack no necesita internet: Grafana tiene desactivados los chequeos de actualización y la telemetría, y no se instalan plugins.
+Las cuatro imágenes locales (`goys-demo/tools:1.0.0` con nmap y tc, `goys-demo/detector:1.1.0` con scikit-learn, `goys-demo/rca:1.1.0` y `goys-demo/sender:1.0.0` con curl y openssl) se construyen en `pull-images.sh`, así `pip` y `apk` corren con internet y no hacen falta en la Feria. Todas las imágenes tienen versión fija (sin `latest`). Una vez descargadas o cargadas, el stack no necesita internet: Grafana tiene desactivados los chequeos de actualización y la telemetría, y no se instalan plugins.
 
 **El modelo no es una imagen.** Vive en el volumen `goys-ollama-models`, declarado `external` en el override del Acto 3: por eso `act3.sh down -v` (arranque limpio) **no lo borra**. Para borrarlo a propósito: `docker volume rm goys-ollama-models`.
 
@@ -226,7 +226,7 @@ Se agregan con `docker-compose.act3.yml` (override sobre los del Acto 1 y 2). El
 | Servicio | IP | Qué hace |
 |----------|----|----------|
 | `ollama` | 172.28.0.60 | Servidor del modelo (`ollama/ollama:0.40.10-rocm`, usa solo CPU). Límite: 4 CPU y 3 GB de RAM. El modelo vive en el volumen externo `goys-ollama-models`. |
-| `rca` | 172.28.0.61 | Servicio Python: consulta Prometheus, abre un incidente cuando `goys_anomaly_flag` sube, arma la evidencia con reglas fijas, pregunta al LLM (máx. 220 tokens, salida JSON acotada), controla la respuesta contra la evidencia y publica la anotación en Grafana y la página del puerto 8085. |
+| `rca` | 172.28.0.61 | Servicio Python: consulta Prometheus, abre un incidente cuando `goys_anomaly_flag` sube, arma la evidencia con reglas fijas, pregunta al LLM (máx. 220 tokens, salida JSON acotada), controla la respuesta contra la evidencia y publica la anotación en Grafana y la página del puerto 8085. Si el LLM no responde a tiempo muestra una respuesta pregrabada, siempre marcada como tal (ver [Respuesta pregrabada](#respuesta-pregrabada-plan-b-si-el-llm-está-lento)). |
 | `otlp-agent` | 172.28.0.53 | Emisor **legítimo**: manda la métrica real de `api` al Collector cada pocos segundos (en texto plano o con certificado de cliente, según el modo). |
 | `poisoner` | 172.28.0.52 | Contenedor inactivo; mientras `poison on` esté activo es el atacante. No tiene certificados. |
 
@@ -267,6 +267,42 @@ bash scripts/act3.sh down -v           # apagar todo (el volumen del modelo se c
 
 El modo por defecto es **OTLP plano**, por eso los Actos 1 y 2 se comportan exactamente igual que antes. Cambiar a mTLS recrea solo el Collector y el `otlp-agent`.
 
+### Respuesta pregrabada (plan B si el LLM está lento)
+
+Un modelo de 1B puede tardar más de lo esperado en una laptop cargada o redactar algo flojo. Para no depender de eso en el escenario, `rca` tiene tres modos, que se eligen con la variable `RCA_MODE`:
+
+| Modo | Qué hace | Cuándo usarlo |
+|------|----------|---------------|
+| `auto` (por defecto) | Pregunta al LLM y espera hasta `RCA_LIVE_BUDGET_SECONDS` (30 s por defecto). Si responde, muestra la respuesta **en vivo**. Si falla o se pasa del presupuesto, muestra la respuesta **pregrabada** de esa familia de incidente y, si la respuesta en vivo llega después, la reemplaza. | **La Feria.** Si todo anda bien se ve el LLM real; si no, la demo sigue igual. |
+| `replay` | No llama nunca al LLM (ni siquiera para precargar el modelo): siempre muestra la respuesta pregrabada. | Si la laptop está muy lenta o Ollama no arranca. |
+| `live` | Solo el LLM. Si falla, queda la evidencia sola («LLM no disponible»). | Ensayos y mediciones del modelo. |
+
+```bash
+bash scripts/act3.sh up                    # modo auto
+RCA_MODE=replay bash scripts/act3.sh up    # recrea solo `rca` en modo replay (también se puede fijar en .env)
+```
+
+**Honestidad.** Una respuesta pregrabada **nunca** se presenta como en vivo. La página (insignia violeta, «respuesta PREGRABADA (no es en vivo)») y la anotación de Grafana dicen: *«Respuesta pregrabada — generada por llama3.2:1b el <fecha> ante un incidente del mismo tipo»*, más el motivo (modo replay, el LLM no respondió en 30 s, el LLM falló). Junto al texto pregrabado se muestra la **evidencia del incidente actual**, siempre medida en el momento, y, plegada, la evidencia del incidente original: las cifras del texto pregrabado son las de ese incidente, no las de ahora. Las respuestas en vivo dicen *«Respuesta en vivo — generada por llama3.2:1b durante este incidente»*. Si no hay archivo pregrabado para la familia del incidente, queda la evidencia sola, como antes.
+
+**Dónde están.** `rca/replay/<familia>.json`, una por familia de señales que reporta el detector: `latency` (incidente `latency on`) y `traffic` (incidente `scan on`). Cada archivo guarda el texto, la evidencia en la que se basó, el modelo, la fecha de generación, la duración del LLM y los avisos del control automático. Son salidas **reales** del modelo de esta demo, sin editar. Se versionan en git y se montan en el contenedor en solo lectura (`./rca/replay:/app/replay:ro`), por lo que regrabarlas no requiere reconstruir la imagen (y la API de `rca` no puede escribirlas).
+
+**Cómo regrabarlas** (después de un cambio de modelo o de prompt; hace falta internet solo si el modelo no está descargado):
+
+```bash
+bash scripts/act3.sh up                       # modo auto o live (en replay no hay respuestas en vivo)
+# esperar el calentamiento del detector (3 min) y repetir cada incidente hasta obtener una respuesta en vivo
+bash scripts/inject-incident.sh latency on    # esperar «respuesta en vivo» en http://localhost:8085
+bash scripts/inject-incident.sh latency off
+bash scripts/inject-incident.sh scan on       # idem
+bash scripts/inject-incident.sh scan off
+bash scripts/act3.sh record                   # guarda en rca/replay/ la mejor respuesta en vivo de cada familia
+git diff rca/replay                           # revisar el texto antes de versionarlo
+```
+
+`record` elige, entre las respuestas en vivo desde que arrancó `rca`, la que tenga **menos avisos** del control automático, luego sin verificaciones cortadas a mitad de frase, y entre iguales la más reciente. No edita el texto. Ese control no prueba que la explicación sea correcta (ver más arriba): conviene **leer** la respuesta y repetir el incidente si dice algo que la evidencia no respalda. Reiniciar `rca` borra las respuestas acumuladas.
+
+**Recomendación.** Para la Feria dejar `RCA_MODE=auto`. Si la laptop está muy lenta (el LLM tarda más de 30 s o satura la CPU), arrancar con `RCA_MODE=replay`: la demo muestra siempre una respuesta pregrabada, claramente marcada, y no gasta CPU en inferencia.
+
 ### Qué se observó (corrida de verificación)
 
 Entorno: Docker Desktop en Windows, laptop con solo la demo corriendo, VM de Docker con 6,7 GiB. Los tiempos se cuentan desde el comando `on`.
@@ -279,6 +315,11 @@ Entorno: Docker Desktop en Windows, laptop con solo la demo corriendo, VM de Doc
 | `scan on` | Detector activo a los ~28 s; explicación lista a los ~50 s (el LLM tardó 14 s). |
 | Duración del LLM en general | De 12 a 28 s por incidente en las corridas de verificación. Si un control de la respuesta salta, se reintenta una vez con otra semilla y el tiempo se acerca a 30 s. |
 | Ollama detenido (`docker compose ... stop ollama`) | A los ~4-8 s de preguntar el incidente pasa a *LLM no disponible, solo evidencia* y la anotación muestra la evidencia sin texto del LLM. Nada se cuelga. |
+| `auto`, Ollama andando | Respuesta en vivo a los 12-21 s del LLM, con la etiqueta «Respuesta en vivo». |
+| `auto`, Ollama detenido | A los ~13 s de detectada la anomalía (5 s de espera de evidencia + ~8 s hasta que falla la conexión) la página y la anotación muestran la respuesta **pregrabada**, con su etiqueta, el motivo y la evidencia actual. |
+| `auto` con presupuesto de 3 s (`RCA_LIVE_BUDGET_SECONDS=3`) | A los ~8 s sale la pregrabada; a los ~26 s llega la respuesta en vivo y reemplaza a la pregrabada (página y anotación pasan a «en vivo»). |
+| `replay` | A los ~5 s (solo la espera de evidencia) sale la pregrabada. Ollama no recibió ninguna petición ni se precargó el modelo. |
+| Familia sin archivo pregrabado | Queda la evidencia sola («LLM no disponible»), como antes. |
 | Primera vez que se carga el modelo | Hasta ~60 s (el servicio lo precarga al arrancar para evitarlo en la demo). |
 
 **Importante sobre la calidad del texto.** Es un modelo de 1B parámetros: la redacción es genérica y a veces dice cosas que la evidencia no respalda (por ejemplo, atribuir el problema «a la aplicación web» sin datos para eso, o hablar de «latencia» cuando las señales eran paquetes por conexión). La demo está diseñada para que **no dependa de que acierte**: la evidencia (izquierda) es medida; el texto (derecha) se contrasta con ella. Los controles automáticos detectan cifras inventadas, cifras junto a otra señal, el sentido invertido («bajó» donde subió) y un «límite» que no existe, y los muestran como **«Atención: …»**; no detectan todos los errores de significado.
@@ -313,6 +354,8 @@ Entorno: Docker Desktop en Windows, laptop con solo la demo corriendo, VM de Doc
 | `external volume "goys-ollama-models" not found` | No se descargó ni se restauró el modelo | `bash scripts/pull-model.sh` (con internet) o `bash scripts/load-model.sh` (desde el tar) |
 | `http://localhost:8085` dice *LLM local: no disponible* | Ollama sigue cargando o está caído | `docker compose -f docker-compose.yml -f docker-compose.act2.yml -f docker-compose.act3.yml logs ollama`; esperar 30 s tras el arranque |
 | No aparece ninguna explicación | El detector sigue en calentamiento o no se activó | `bash scripts/inject-incident.sh status` debe mostrar `flag=1`; el calentamiento dura 3 minutos |
+| La página dice «respuesta PREGRABADA» y no se esperaba | El LLM no respondió en `RCA_LIVE_BUDGET_SECONDS`, falló, o `RCA_MODE=replay` | El motivo está escrito en la propia respuesta. Con `auto`, si el LLM termina después, la respuesta en vivo la reemplaza |
+| `act3.sh record` dice que no hay respuesta en vivo | No hubo incidentes con respuesta en vivo desde que arrancó `rca` (o está en `replay`) | Repetir `latency on` / `scan on` hasta ver «respuesta en vivo» y volver a correr `record` |
 | Hay una segunda explicación | El detector bajó y volvió a subir (nuevo episodio) | Es normal; la más reciente es la que cuenta |
 | Texto con «Atención: …» | Un control automático detectó algo dudoso | Es parte de la demo: mostrar que la evidencia permite verlo |
 | `act3.sh mtls on` falla al crear certificados | No hay `openssl` en el host y Docker no tiene la imagen `goys-demo/sender` | `bash scripts/pull-images.sh`, o `CERTS_USE_DOCKER=1 bash scripts/certs.sh` |
@@ -334,7 +377,7 @@ Preparación (antes de que entre el público): `bash scripts/act3.sh down -v` (c
 | 3:05 - 3:45 | **3b. mTLS** | `act3.sh mtls on`, `act3.sh try attacker` (error TLS), `act3.sh try legit` (HTTP 200). | «Ahora el Collector exige certificado. El atacante queda afuera, el agente legítimo entra.» |
 | 3:45 - 4:00 | Cierre | `act3.sh mtls off` y `act3.sh poison off` (si falta tiempo, después). | «Detectar, explicar y proteger: los tres pasos.» |
 
-Notas: el LLM tarda entre 15 y 30 s, pero el detector se activa antes, así que el Acto 3a se solapa con el segundo acto; si hay prisa se muestra la anotación en el tablero y la página se abre después. Plan B si el LLM falla: la página y la anotación muestran la evidencia sola («LLM no disponible») y la demo sigue. Después de ensayar: `act3.sh poison off`, `act3.sh mtls off` y `bash scripts/inject-incident.sh latency off`.
+Notas: el LLM tarda entre 15 y 30 s, pero el detector se activa antes, así que el Acto 3a se solapa con el segundo acto; si hay prisa se muestra la anotación en el tablero y la página se abre después. Plan B si el LLM falla o tarda: con `RCA_MODE=auto` (por defecto) la página y la anotación pasan a la respuesta **pregrabada**, marcada como tal y junto a la evidencia actual; con `RCA_MODE=replay` se usa siempre. Sin archivo pregrabado, queda la evidencia sola («LLM no disponible») y la demo sigue. Después de ensayar: `act3.sh poison off`, `act3.sh mtls off` y `bash scripts/inject-incident.sh latency off`.
 
 ## Puntos de extensión
 
@@ -342,7 +385,7 @@ Notas: el LLM tarda entre 15 y 30 s, pero el detector se activa antes, así que 
 - **Nuevos targets de Prometheus**: agregar un archivo YAML en `prometheus/targets/` (formato `file_sd`); se recarga solo cada 10 s. No hace falta tocar `prometheus.yml`. Con el override del Acto 2 esa ruta apunta a `prometheus/targets-act2/`.
 - **Nuevas reglas**: agregar archivos `.yml` en `prometheus/rules/` y recargar con `curl -X POST localhost:9090/-/reload`.
 - **Collector**: `otel/collector-config.yaml` tiene el pipeline de métricas (OTLP → Prometheus en el puerto 8889). El Acto 3 le suma una segunda configuración (`otel/overlay-plain.yaml` u `otel/overlay-mtls.yaml`) con `--config` repetido: el Collector combina ambos archivos.
-- **Otro modelo de LLM**: `RCA_MODEL` en `.env` (por ejemplo, otro modelo ya descargado con `ollama pull` dentro del volumen). Cambia la calidad del texto y la duración; las pruebas de la demo se hicieron con `llama3.2:1b`.
+- **Otro modelo de LLM**: `RCA_MODEL` en `.env` (por ejemplo, otro modelo ya descargado con `ollama pull` dentro del volumen). Cambia la calidad del texto y la duración; las pruebas de la demo se hicieron con `llama3.2:1b`. Después de cambiarlo, regrabar las respuestas pregrabadas (`act3.sh record`).
 - **Más señales para el LLM**: agregar el nombre y su descripción en `GLOSSARY` y en `FAMILY_TARGET` de `rca/main.py`.
 
 ## Solución de problemas
