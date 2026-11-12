@@ -77,7 +77,7 @@ def table_html(rows):
     cells = [[c.strip() for c in r.strip().strip("|").split("|")] for r in rows]
     head, body = cells[0], cells[2:]
     n = len(head)
-    widths = {6: [14, 18, 13, 16, 18, 21]}.get(n, [round(100 / n)] * n)
+    widths = {6: [12, 17, 18, 15, 17, 21]}.get(n, [round(100 / n)] * n)
     out = ["<table>", "<colgroup>" + "".join(f'<col style="width:{w}%">' for w in widths) + "</colgroup>"]
     out.append("<thead><tr>" + "".join(f"<th>{inline(c)}</th>" for c in head) + "</tr></thead><tbody>")
     for r in body:
