@@ -11,6 +11,7 @@
 #   act3.sh mtls off            back to plain, unauthenticated OTLP
 #   act3.sh try attacker|legit  one attempt from the attacker / from the legitimate agent, result on screen
 #   act3.sh status              mode, attack state, what Prometheus holds, LLM state
+#   act3.sh record              save the best LIVE explanation per family (latency, traffic) into rca/replay/
 #
 # The Act 1-2 stack is not affected: plain OTLP is the default and nothing here runs unless the
 # Act 3 override is loaded.
@@ -118,6 +119,30 @@ try_sender() {
   esac
 }
 
+# Save, on the host, the best live explanation rca has produced so far for each signal family.
+# rca mounts rca/replay read-only, so it only serves the answer (GET /api/replay/<family>) and we write the file.
+# Run it after a live incident (inject-incident.sh latency on / scan on, then wait for "respuesta en vivo").
+record_replay() {
+  # Relative paths on purpose: with MSYS_NO_PATHCONV a /c/... or /tmp/... path would reach curl.exe untranslated.
+  local dir="rca/replay" family tmp saved=0
+  mkdir -p "$dir"
+  for family in latency traffic; do
+    tmp="$dir/.$family.json.tmp"
+    if curl -fs -m 10 -o "$tmp" "http://localhost:8085/api/replay/$family"; then
+      mv "$tmp" "$dir/$family.json"
+      echo "saved rca/replay/$family.json"
+      saved=$((saved + 1))
+    else
+      rm -f "$tmp"
+      echo "no live explanation for '$family' yet (latency: inject-incident.sh latency on; traffic: inject-incident.sh scan on)"
+    fi
+  done
+  if [ "$saved" -eq 0 ]; then
+    echo "Nothing recorded. RCA_MODE must be auto or live, and an incident must have finished with a live answer." >&2
+    exit 1
+  fi
+}
+
 prom_value() {
   compose exec -T prometheus wget -qO- "http://localhost:9090/api/v1/query?query=$1" 2>/dev/null \
     | sed -n 's/.*"value":\[[^,]*,"\([^"]*\)"\].*/\1/p' || true
@@ -153,6 +178,7 @@ main() {
     mtls:off)      mtls_set plain ;;
     try:*)         try_sender "${2:-}" ;;
     status:*)      show_status ;;
+    record:*)      record_replay ;;
     *)             usage ;;
   esac
 }

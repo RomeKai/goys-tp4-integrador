@@ -57,7 +57,7 @@ services:
   rca:
     build:
       context: ./rca
-    image: goys-demo/rca:1.0.0
+    image: goys-demo/rca:1.1.0
     <<: *restart
     environment:
       PROMETHEUS_URL: http://prometheus:9090
@@ -68,8 +68,14 @@ services:
       GRAFANA_USER: ${GRAFANA_ADMIN_USER:-admin}
       GRAFANA_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       LLM_TIMEOUT_SECONDS: ${RCA_LLM_TIMEOUT_SECONDS:-90}
+      # live = LLM only; replay = recorded answer only (the LLM is never called); auto = LLM with a budget, then recorded.
+      RCA_MODE: ${RCA_MODE:-auto}
+      RCA_LIVE_BUDGET_SECONDS: ${RCA_LIVE_BUDGET_SECONDS:-30}
     ports:
       - "127.0.0.1:8085:8085" # read-only page with the latest explanations and their evidence
+    volumes:
+      # Recorded answers (see scripts/act3.sh record). A bind mount, so re-recording needs no rebuild.
+      - ./rca/replay:/app/replay:ro
     networks:
       demo-net:
         ipv4_address: 172.28.0.61

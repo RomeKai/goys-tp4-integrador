@@ -7,7 +7,12 @@ What it does, in four steps:
   3. It sends only that evidence to a small local LLM (Ollama) and asks, in Spanish, for the probable
      cause and 2-3 next checks. The prompt forbids inventing facts.
   4. It publishes evidence + explanation as a Grafana annotation and on a read-only web page (/).
-If the LLM is down or too slow, step 4 still shows the evidence, marked "LLM no disponible".
+If the LLM is down or too slow, step 4 falls back (RCA_MODE, see Config):
+  - live:   evidence only, marked "LLM no disponible".
+  - replay: never asks the LLM; shows a REAL answer recorded earlier for the same incident family.
+  - auto:   asks the LLM with a time budget; past the budget (or on failure) shows the recorded answer
+            and, if the live one still arrives, replaces it. A recorded answer is ALWAYS labelled as such.
+With no recording for that family, the fallback is evidence only.
 """
 
 from __future__ import annotations
@@ -20,12 +25,14 @@ import os
 import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import requests
 from page import render_page
+from replay import Replay, live_label, load_replay
 
 log = logging.getLogger("rca")
 
@@ -48,6 +55,13 @@ class Config:
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "220"))  # cap on generated tokens
     threads: int = int(os.getenv("LLM_THREADS", "4"))  # CPU threads for inference
     port: int = int(os.getenv("PORT", "8085"))
+    # live = LLM only; replay = recorded answer only (the LLM is never called); auto = LLM with a budget, then recorded.
+    mode: str = os.getenv("RCA_MODE", "auto")
+    live_budget: float = float(os.getenv("RCA_LIVE_BUDGET_SECONDS", "30"))  # auto: wait this long for the LLM
+    replay_dir: Path = Path(os.getenv("RCA_REPLAY_DIR", str(Path(__file__).parent / "replay")))
+
+
+MODES = ("live", "replay", "auto")
 
 
 # --- Domain knowledge fixed by us (not measured, not generated) ---------------------------------
@@ -347,7 +361,7 @@ def ask_llm(cfg: Config, evidence_text: str, on_text, seed: int = 42) -> str:
         raise LlmError("no se pudo conectar con Ollama (¿está apagado?)") from error
     except (requests.Timeout, TimeoutError) as error:
         raise LlmError(f"el LLM tardó más de {cfg.llm_timeout:.0f} s") from error
-    except (KeyError, TypeError, json.JSONDecodeError) as error:
+    except (KeyError, TypeError, AttributeError, json.JSONDecodeError) as error:
         raise LlmError("el LLM devolvió una respuesta incompleta") from error
     except requests.RequestException as error:
         raise LlmError(f"{type(error).__name__}: {error}") from error
@@ -384,10 +398,12 @@ def to_number(token: str) -> float | None:
 
 def grounding_warnings(explanation: str, ev: Evidence) -> list[str]:
     """Cheap hallucination alarms, in Spanish. They catch (1) figures that are not in the evidence,
-    (2) a figure written next to the wrong signal name, and (3) words copied from the prompt's example.
+    (2) a figure written next to the wrong signal name, and (3) words copied from the prompt's example, (4) a signal family that did not fire.
     They do NOT prove the text is right: a sentence can use true figures and still claim something false."""
     warnings = []
-    figures = {token: to_number(token) for token in NUMBER.findall(ev.text)}
+    # The score line names every family, fired or not: leave it out when checking what the evidence says.
+    facts = "\n".join(line for line in ev.text.splitlines() if not line.startswith("Puntaje por familia"))
+    figures = {token: to_number(token) for token in NUMBER.findall(facts)}
     allowed = [v for v in figures.values() if v is not None]
     unsupported = []
     for token in NUMBER.findall(explanation):
@@ -421,13 +437,18 @@ def grounding_warnings(explanation: str, ev: Evidence) -> list[str]:
     if reversed_direction:
         warnings.append("sentido invertido (dice que bajó lo que subió, o al revés): " + ", ".join(reversed_direction))
 
-    lowered, evidence_lowered = explanation.lower(), ev.text.lower()
+    lowered, evidence_lowered = explanation.lower(), facts.lower()
     limits = [t for t in INVENTED_LIMIT_TERMS if t in lowered and t not in evidence_lowered]
     if limits:
         warnings.append("habla de un límite que la evidencia no define (\"normal\" es el promedio aprendido, no un tope)")
     copied = [t for t in EXAMPLE_TERMS if t in lowered and t not in evidence_lowered]
     if copied:
         warnings.append("términos copiados del ejemplo del prompt, no de la evidencia: " + ", ".join(copied))
+    # (4) A family that did not fire is only named in the score line, so naming it is not grounded.
+    off_family = [FAMILY_LABEL.get(f, f) for f in ev.family_scores
+                  if f not in ev.flagged and FAMILY_LABEL.get(f, f).lower() in lowered and FAMILY_LABEL.get(f, f).lower() not in evidence_lowered]
+    if off_family:
+        warnings.append("menciona " + ", ".join(off_family) + ", que no está en la evidencia")
     return warnings
 
 
@@ -436,9 +457,13 @@ def grounding_warnings(explanation: str, ev: Evidence) -> list[str]:
 class Incident:
     id: int
     detected_at: float
-    status: str = "analizando"  # analizando | listo | llm_no_disponible
+    status: str = "analizando"  # analizando | listo (live answer) | pregrabada (recorded answer) | llm_no_disponible
+    family: str = ""  # signal family that fired first (latency, traffic): selects the recorded answer
     evidence: Evidence | None = None
-    explanation: str = ""  # final readable text
+    explanation: str = ""  # final readable text of the LIVE answer
+    replay: Replay | None = None  # the recorded answer shown while status == "pregrabada"
+    replay_reason: str = ""  # why the recorded answer is shown instead of a live one
+    live_pending: bool = False  # recorded answer shown while the live attempt is still running
     partial: str = ""  # raw text received before a failure
     llm_error: str = ""
     llm_seconds: float = 0.0
@@ -451,8 +476,10 @@ class Incident:
             "id": self.id,
             "detected_at": datetime.fromtimestamp(self.detected_at, timezone.utc).isoformat(),
             "status": self.status,
+            "family": self.family,
             "evidence": self.evidence.text if self.evidence else "",
             "explanation": self.explanation,
+            "replay": {**asdict(self.replay), "label": self.replay.label(), "reason": self.replay_reason} if self.replay else None,
             "llm_error": self.llm_error,
             "llm_seconds": round(self.llm_seconds, 1),
             "warnings": self.warnings,
@@ -468,7 +495,7 @@ class State:
 
     def busy(self) -> bool:
         with self.lock:
-            return any(i.status == "analizando" for i in self.incidents)
+            return any(i.status == "analizando" or i.live_pending for i in self.incidents)
 
     def open_incident(self) -> Incident:
         with self.lock:
@@ -508,18 +535,18 @@ def grafana_annotate(cfg: Config, incident: Incident, text: str) -> None:
 
 
 # --- One incident, start to finish -----------------------------------------------------------------
-def analyze(cfg: Config, state: State, incident: Incident) -> None:
-    grafana_annotate(cfg, incident, annotation_text("Anomalía detectada: analizando causa con LLM local..."))
-    time.sleep(cfg.evidence_delay)
-    try:
-        incident.evidence = collect_evidence(cfg)
-    except (requests.RequestException, KeyError, ValueError) as error:
-        incident.status = "llm_no_disponible"
-        incident.llm_error = f"No se pudo reunir la evidencia: {error}"
-        log.exception("Evidence collection failed")
-        grafana_annotate(cfg, incident, annotation_text("Anomalía: no se pudo reunir la evidencia", str(error)))
-        return
-    evidence = incident.evidence
+@dataclass
+class LiveResult:
+    """Outcome of the live LLM attempt. The worker thread fills it; analyze() reads it after the thread ends."""
+
+    text: str = ""
+    warnings: list[str] = field(default_factory=list)
+    error: str = ""
+    seconds: float = 0.0
+
+
+def run_live(cfg: Config, incident: Incident, evidence: Evidence, result: LiveResult) -> None:
+    """Ask the LLM (with one retry) and store what came back. Never raises."""
 
     def keep_partial(raw: str) -> None:  # raw JSON so far; only shown if the LLM fails midway
         incident.partial = raw
@@ -530,33 +557,108 @@ def analyze(cfg: Config, state: State, incident: Incident) -> None:
         # try once more with another seed and keep the cleaner answer (the warning stays if both fail).
         best = None
         for seed in (42, 7):
-            text = ask_llm(cfg, evidence.text, keep_partial, seed=seed)
+            try:
+                text = ask_llm(cfg, evidence.text, keep_partial, seed=seed)
+            except Exception as error:  # noqa: BLE001
+                if best is None:
+                    raise
+                log.warning("Incident %d: retry with seed %d failed (%r), keeping the first answer", incident.id, seed, error)
+                break
             found = grounding_warnings(text, evidence)
             if best is None or len(found) < len(best[1]):
                 best = (text, found)
             if not found:
                 break
             log.info("Incident %d: attempt with seed %d had warnings: %s", incident.id, seed, found)
-        incident.explanation, incident.warnings = best
-        incident.status = "listo"
-        state.llm_status = f"listo ({cfg.model})"
+        result.text, result.warnings = best
     except LlmError as error:
-        incident.status = "llm_no_disponible"
-        incident.llm_error = str(error)
-        state.llm_status = f"con problemas: {error}"
-        log.warning("LLM unavailable: %s", error)
-    incident.llm_seconds = time.monotonic() - started
+        result.error = str(error)
+    except Exception as error:  # noqa: BLE001 (the worker must never die silently: analyze() reads result.error)
+        log.exception("Incident %d: unexpected error in the live attempt", incident.id)
+        result.error = repr(error)
+    result.seconds = time.monotonic() - started
 
+
+def annotation_for(cfg: Config, incident: Incident) -> str:
+    """The Grafana text for the incident's current state. The label always says live or pre-recorded."""
+    evidence = incident.evidence
     targets = ", ".join(FAMILY_TARGET.get(f, "?") for f in evidence.flagged)
     if incident.status == "listo":
-        headline = f"Anomalía en {targets}: explicación del LLM local ({incident.llm_seconds:.0f} s)"
+        headline = f"Anomalía en {targets}: {live_label(cfg.model)} ({incident.llm_seconds:.0f} s)"
         detail = incident.explanation.strip()
         if incident.warnings:
             detail += "\nAtención: " + "; ".join(incident.warnings)
+    elif incident.status == "pregrabada":
+        replay = incident.replay
+        headline = f"Anomalía en {targets}: {replay.label()} ({incident.replay_reason})"
+        detail = replay.explanation.strip()
+        if replay.warnings:
+            detail += "\nAtención (en la respuesta original): " + "; ".join(replay.warnings)
+        detail += "\n\nEvidencia de ESTE incidente (medida ahora; las cifras del texto pregrabado son las del incidente original):\n"
+        detail += evidence.text
     else:
         headline = f"Anomalía en {targets}: LLM no disponible, solo evidencia"
         detail = evidence.text.split("Señales que se desviaron")[0].strip()
-    grafana_annotate(cfg, incident, annotation_text(headline, detail))
+    return annotation_text(headline, detail)
+
+
+def show_replay(incident: Incident, replay: Replay, reason: str) -> None:
+    incident.replay, incident.replay_reason, incident.status = replay, reason, "pregrabada"
+
+
+def analyze(cfg: Config, state: State, incident: Incident) -> None:
+    grafana_annotate(cfg, incident, annotation_text("Anomalía detectada: analizando causa..."))
+    time.sleep(cfg.evidence_delay)
+    try:
+        incident.evidence = collect_evidence(cfg)
+    except (requests.RequestException, KeyError, ValueError) as error:
+        incident.status = "llm_no_disponible"
+        incident.llm_error = f"No se pudo reunir la evidencia: {error}"
+        log.exception("Evidence collection failed")
+        grafana_annotate(cfg, incident, annotation_text("Anomalía: no se pudo reunir la evidencia", str(error)))
+        return
+    evidence = incident.evidence
+    incident.family = evidence.flagged[0] if evidence.flagged else ""
+    replay = None if cfg.mode == "live" else load_replay(cfg.replay_dir, incident.family)
+
+    if cfg.mode == "replay":
+        log.info("Incident %d: replay mode, the LLM is not called (recorded answer: %s)", incident.id, "yes" if replay else "none")
+        if replay:
+            show_replay(incident, replay, "modo replay, no se consulta al LLM")
+        else:
+            incident.status, incident.llm_error = "llm_no_disponible", f"modo replay y no hay respuesta pregrabada para '{incident.family}'"
+        grafana_annotate(cfg, incident, annotation_for(cfg, incident))
+        return
+
+    result = LiveResult()
+    worker = threading.Thread(target=run_live, args=(cfg, incident, evidence, result), daemon=True)
+    worker.start()
+    # Auto with a recording at hand: wait only the budget. Otherwise wait for the LLM (bounded by llm_timeout).
+    worker.join(cfg.live_budget if cfg.mode == "auto" and replay else None)
+    if worker.is_alive():
+        log.info("Incident %d: no live answer after %.0f s, showing the recorded one", incident.id, cfg.live_budget)
+        incident.live_pending = True  # before show_replay: busy() must never be False while the worker runs
+        show_replay(incident, replay, f"el LLM no respondió en {cfg.live_budget:.0f} s")
+        grafana_annotate(cfg, incident, annotation_for(cfg, incident))
+        worker.join()  # bounded: ask_llm gives up after llm_timeout
+        incident.live_pending = False
+
+    incident.llm_seconds = result.seconds
+    if not result.error and not result.text:  # never publish "listo" with nothing to show
+        result.error = "el LLM devolvió una respuesta vacía"
+    if result.error:
+        state.llm_status = f"con problemas: {result.error}"
+        log.warning("LLM unavailable: %s", result.error)
+        if incident.status != "pregrabada":  # nothing shown yet: the recording if there is one, else evidence only
+            if replay:
+                show_replay(incident, replay, f"el LLM falló: {result.error}")
+            else:
+                incident.status, incident.llm_error = "llm_no_disponible", result.error
+    else:
+        incident.explanation, incident.warnings = result.text, result.warnings
+        incident.status, incident.replay, incident.replay_reason = "listo", None, ""  # live replaces the recording
+        state.llm_status = f"listo ({cfg.model})"
+    grafana_annotate(cfg, incident, annotation_for(cfg, incident))
     log.info("Incident %d finished: %s in %.1f s", incident.id, incident.status, incident.llm_seconds)
 
 
@@ -606,7 +708,44 @@ def warm_up_llm(cfg: Config, state: State) -> None:
 def page_html(cfg: Config, state: State) -> str:
     with state.lock:
         incidents = list(state.incidents)
-    return render_page(cfg.model, state.llm_status, incidents, lambda text: build_messages(text))
+    return render_page(cfg.model, state.llm_status, cfg.mode, incidents, lambda text: build_messages(text))
+
+
+def has_cut_check(explanation: str) -> bool:
+    """True if a next-check line stops mid-sentence (the length cap in ANSWER_SCHEMA can cut it)."""
+    return any(not line.rstrip().endswith((".", "!", "?")) for line in explanation.splitlines() if line.startswith("- "))
+
+
+def off_family_mentions(explanation: str, ev: Evidence) -> int:
+    """How often the text names a signal family that did NOT fire (e.g. "latencia" in a traffic incident).
+    The grounding checks miss it because the family scores line is part of the evidence text."""
+    lowered = explanation.lower()
+    return sum(lowered.count(FAMILY_LABEL.get(f, f)) for f in ev.family_scores if f not in ev.flagged)
+
+
+def record_rank(incident: Incident) -> tuple[int, bool, int]:
+    """Lower is cleaner: grounding warnings, then a check cut mid-sentence, then mentions of a family that did not fire."""
+    return (len(incident.warnings), has_cut_check(incident.explanation), off_family_mentions(incident.explanation, incident.evidence))
+
+
+def replay_record(cfg: Config, state: State, family: str) -> dict | None:
+    """The best LIVE answer so far for this family, in the replay file format (None if there is none).
+    Best = lowest record_rank(), the newest among equals. `act3.sh record` saves it on the host:
+    the container only mounts the replay folder read-only."""
+    with state.lock:
+        live = [i for i in state.incidents if i.family == family and i.status == "listo" and i.evidence]  # newest first
+    if not live:
+        return None
+    best = min(live, key=record_rank)  # min() keeps the first (newest) of equals
+    return {
+        "family": family,
+        "explanation": best.explanation.strip(),
+        "evidence": best.evidence.text,
+        "model": cfg.model,
+        "generated_at": datetime.fromtimestamp(best.detected_at, timezone.utc).isoformat(timespec="seconds"),
+        "llm_seconds": round(best.llm_seconds, 1),
+        "warnings": best.warnings,
+    }
 
 
 def make_handler(cfg: Config, state: State) -> type[BaseHTTPRequestHandler]:
@@ -617,6 +756,13 @@ def make_handler(cfg: Config, state: State) -> type[BaseHTTPRequestHandler]:
             elif self.path == "/api/incidents":
                 with state.lock:
                     body = json.dumps([i.as_dict() for i in state.incidents], ensure_ascii=False).encode()
+                kind = "application/json; charset=utf-8"
+            elif self.path.startswith("/api/replay/"):
+                record = replay_record(cfg, state, self.path.removeprefix("/api/replay/"))
+                if record is None:
+                    self.send_error(404, "no live answer recorded for that family yet")
+                    return
+                body = (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode()
                 kind = "application/json; charset=utf-8"
             elif self.path == "/health":
                 body, kind = b"ok", "text/plain"
@@ -638,10 +784,17 @@ def make_handler(cfg: Config, state: State) -> type[BaseHTTPRequestHandler]:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = Config()
+    if cfg.mode not in MODES:
+        log.warning("RCA_MODE=%r is not one of %s: using 'auto'", cfg.mode, MODES)
+        cfg = replace(cfg, mode="auto")
     state = State()
-    threading.Thread(target=warm_up_llm, args=(cfg, state), daemon=True).start()
+    if cfg.mode == "replay":
+        state.llm_status = "no se usa (modo replay)"  # replay never touches Ollama, not even to warm it up
+    else:
+        threading.Thread(target=warm_up_llm, args=(cfg, state), daemon=True).start()
     threading.Thread(target=monitor, args=(cfg, state), daemon=True).start()
-    log.info("Serving page on :%d, model %s, LLM timeout %.0f s", cfg.port, cfg.model, cfg.llm_timeout)
+    log.info("Serving page on :%d, mode %s, model %s, LLM timeout %.0f s, live budget %.0f s, replay dir %s",
+             cfg.port, cfg.mode, cfg.model, cfg.llm_timeout, cfg.live_budget, cfg.replay_dir)
     ThreadingHTTPServer(("0.0.0.0", cfg.port), make_handler(cfg, state)).serve_forever()
 
 

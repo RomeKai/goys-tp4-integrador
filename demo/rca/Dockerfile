@@ -9,7 +9,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY main.py page.py .
+COPY main.py page.py replay.py .
 
 # The service only talks HTTP to Prometheus, Ollama and Grafana; it does not need root.
 USER nobody
