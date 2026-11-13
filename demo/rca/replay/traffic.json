@@ -1,0 +1,9 @@
+{
+  "family": "traffic",
+  "explanation": "Causa probable: tx_packets_per_conn subió a 6.44 (normal 5.67) y rx_packets_per_conn subió a 7.75 (normal 7.12). Esto sugiere un aumento en el tráfico de datos, pero la evidencia no alcanza para nombrar el motivo.\nPróximas verificaciones:\n- Revisar la configuración del servicio web para ver si se ajustó a las expectativas.\n- Comprobar si el tráfico aumentó de manera consistente en otros servicios.\n- Volver a medir ambas señales en unos minutos para ver si se normalizan.",
+  "evidence": "Detector ML: puntaje 0.62 (línea de alarma 0.60).\nPuntaje por familia: latencia 0.39 | tráfico 0.62. Familia que disparó: tráfico.\nServicio afectado: web.\nSeñales que se desviaron (ahora frente a lo normal aprendido en el calentamiento):\n  - tx_packets_per_conn (paquetes TCP enviados por web por cada conexión completada): ahora 6.44, normal 5.67 (x1.1), hace 40 s 7.25\n  - rx_packets_per_conn (paquetes TCP recibidos por web por cada conexión completada): ahora 7.75, normal 7.12 (x1.1), hace 40 s 8.65\n  - rx_bytes_per_conn (bytes recibidos por web por cada conexión completada): ahora 555.2, normal 533.3 (x1.0), hace 40 s 616.8\nObservaciones (reglas fijas sobre las cifras, sin IA):\n  - Ninguna sonda cayó y ninguna alerta por umbral está activa: los servicios siguen respondiendo.\nContexto: alertas por umbral activas: 0; sondas caídas: 0 de 6.",
+  "model": "llama3.2:1b",
+  "generated_at": "2026-11-12T19:54:40+00:00",
+  "llm_seconds": 16.5,
+  "warnings": []
+}

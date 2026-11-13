@@ -8,7 +8,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "graphTooltip": 1,
   "refresh": "5s",
@@ -20,7 +20,20 @@
     "list": []
   },
   "annotations": {
-    "list": []
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
   },
   "links": [
     {
@@ -36,9 +49,21 @@
       "targetBlank": false,
       "tooltip": "",
       "url": ""
+    },
+    {
+      "type": "link",
+      "title": "Explicación de causa raíz (LLM local)",
+      "icon": "doc",
+      "url": "http://localhost:8085",
+      "targetBlank": true,
+      "tooltip": "Página con la evidencia y la explicación del LLM",
+      "asDropdown": false,
+      "includeVars": false,
+      "keepTime": false,
+      "tags": []
     }
   ],
-  "description": "Incidentes sutiles (latencia con jitter y escaneo lento de puertos) que el monitoreo por umbrales no detecta y el detector ML sí.",
+  "description": "Incidentes sutiles (latencia con jitter y escaneo lento de puertos) que el monitoreo por umbrales no detecta y el detector ML sí. El Acto 3 agrega la explicación de causa raíz con un LLM local.",
   "panels": [
     {
       "id": 1,
@@ -344,6 +369,60 @@
       ]
     },
     {
+      "id": 17,
+      "type": "row",
+      "title": "Acto 3: explicación de la causa raíz con un LLM local",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 18,
+      "type": "annolist",
+      "title": "Última explicación del LLM local (aparece al activarse la alerta del detector)",
+      "description": "Anotaciones publicadas por el servicio rca: primero «analizando…» y, cuando el LLM termina, su explicación. Sin alerta del detector no hay anotaciones. La evidencia en la que se basa cada explicación está en la página de la derecha.",
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 16,
+        "h": 7
+      },
+      "options": {
+        "onlyFromThisDashboard": true,
+        "onlyInTimeRange": false,
+        "tags": [
+          "rca"
+        ],
+        "limit": 1,
+        "showUser": false,
+        "showTime": true,
+        "showTags": false,
+        "navigateToPanel": false,
+        "navigateBefore": "10m",
+        "navigateAfter": "10m"
+      }
+    },
+    {
+      "id": 19,
+      "type": "text",
+      "title": "Evidencia junto a la explicación",
+      "gridPos": {
+        "x": 16,
+        "y": 6,
+        "w": 8,
+        "h": 7
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "El LLM **solo recibe datos medidos** (qué familia puntuó, cuánto se desvió cada señal respecto de la base aprendida, valores recientes). Su texto puede equivocarse: por eso la página muestra la evidencia al lado.\n\n**[Abrir la página de causa raíz](http://localhost:8085)** (con `Ctrl+clic` se abre en otra pestaña)\n\nTarda unos 15 a 30 s en una CPU sin GPU (hasta 60 s la primera vez). Mientras tanto muestra «analizando…». **Este panel solo se llena si está levantado el Acto 3** (`docker-compose.act3.yml`); con los Actos 1 y 2 solos queda vacío."
+      }
+    },
+    {
       "id": 6,
       "type": "timeseries",
       "title": "Puntaje de anomalía (detector ML)",
@@ -354,7 +433,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 6,
+        "y": 14,
         "w": 12,
         "h": 9
       },
@@ -465,7 +544,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 6,
+        "y": 14,
         "w": 12,
         "h": 9
       },
@@ -576,7 +655,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 15,
+        "y": 23,
         "w": 24,
         "h": 1
       },
@@ -593,7 +672,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 24,
         "w": 12,
         "h": 8
       },
@@ -712,7 +791,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 16,
+        "y": 24,
         "w": 12,
         "h": 8
       },
@@ -792,7 +871,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 32,
         "w": 24,
         "h": 1
       },
@@ -809,7 +888,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 25,
+        "y": 33,
         "w": 12,
         "h": 8
       },
@@ -885,7 +964,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 25,
+        "y": 33,
         "w": 12,
         "h": 8
       },
@@ -957,7 +1036,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 33,
+        "y": 41,
         "w": 24,
         "h": 1
       },
@@ -974,7 +1053,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 34,
+        "y": 42,
         "w": 12,
         "h": 8
       },
@@ -1094,7 +1173,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 34,
+        "y": 42,
         "w": 12,
         "h": 8
       },

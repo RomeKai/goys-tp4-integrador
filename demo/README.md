@@ -1,6 +1,6 @@
-# Demo TP4 — Acto 1: monitoreo tradicional y Acto 2: detección de anomalías
+# Demo TP4 — Acto 1: monitoreo tradicional, Acto 2: detección de anomalías y Acto 3: causa raíz con LLM local y seguridad de la telemetría
 
-Demo de la Feria de Redes (tema: *Observabilidad inteligente en redes: del monitoreo reactivo al AIOps predictivo*). El **Acto 1** establece la línea base: un entorno con monitoreo por umbrales donde todo se ve en verde. El **Acto 2** (sección [Acto 2](#acto-2-anomalías-que-los-umbrales-no-ven)) inyecta dos incidentes sutiles que esos umbrales no detectan, pero sí un detector ML. El Acto 3 (explicación con un LLM local y falla de mTLS) se construye sobre esta base y todavía no está implementado.
+Demo de la Feria de Redes (tema: *Observabilidad inteligente en redes: del monitoreo reactivo al AIOps predictivo*). El **Acto 1** establece la línea base: un entorno con monitoreo por umbrales donde todo se ve en verde. El **Acto 2** (sección [Acto 2](#acto-2-anomalías-que-los-umbrales-no-ven)) inyecta dos incidentes sutiles que esos umbrales no detectan, pero sí un detector ML. El **Acto 3** (sección [Acto 3](#acto-3-causa-raíz-con-un-llm-local-y-telemetría-falsa)) agrega la explicación de la causa con un LLM local y un escenario de falla de seguridad (telemetría falsa y mTLS). **Orden de ejecución completo de los tres actos para la presentación de 4 minutos: [Presentación de 4 minutos](#presentación-de-4-minutos-los-tres-actos).**
 
 ## Qué muestra el Acto 1
 
@@ -40,10 +40,11 @@ Todos los puertos se publican solo en `127.0.0.1` de la laptop.
 |----------|--------------|-------|
 | Grafana | http://localhost:3000 | Acceso anónimo como *Viewer*; el dashboard es la página de inicio. Administrador: `admin` / contraseña de `.env` (por defecto `admin`, solo para la demo). |
 | Prometheus | http://localhost:9090 | Targets en `/targets`, alertas en `/alerts`. |
-| OTLP gRPC | `localhost:4317` | Sin TLS (a propósito: base del escenario de falla del Acto 3). |
-| OTLP HTTP | `localhost:4318` | Sin TLS. |
+| OTLP gRPC | `localhost:4317` | Sin TLS (a propósito: base del escenario de falla del Acto 3). Con mTLS activo exige certificado de cliente. |
+| OTLP HTTP | `localhost:4318` | Sin TLS (igual que arriba). |
+| Explicación de causa raíz | http://localhost:8085 | Solo con el override del Acto 3: página de solo lectura con la evidencia y el texto del LLM. |
 
-`web`, `api`, `blackbox`, `node-exporter` y los puertos 8888/8889/13133 del Collector son internos y no se publican.
+`web`, `api`, `blackbox`, `node-exporter`, `ollama` y los puertos 8888/8889/13133 del Collector son internos y no se publican.
 
 ## Cómo ejecutarlo
 
@@ -93,19 +94,29 @@ Hacer esto **una vez, con internet**, antes de la Feria:
 
 ```bash
 cd demo
-bash scripts/pull-images.sh    # descarga las 6 imágenes públicas (versión fija) y CONSTRUYE las 2 locales del Acto 2
-bash scripts/save-images.sh    # genera demo/images/goys-demo-images.tar (~480 MB, 8 imágenes, ignorado por git)
+bash scripts/pull-images.sh    # descarga las imágenes públicas (versión fija) y CONSTRUYE las 4 locales (Actos 2 y 3)
+bash scripts/pull-model.sh     # descarga el modelo del LLM (llama3.2:1b) al volumen Docker goys-ollama-models
+bash scripts/save-images.sh    # demo/images/goys-demo-images.tar (1,97 GB, 11 imágenes, ignorado por git)
+bash scripts/save-model.sh     # demo/images/goys-ollama-model.tar (1,32 GB, el volumen del modelo, ignorado por git)
+bash scripts/certs.sh          # certificados de demo para mTLS (demo/certs/, ignorado por git); se genera en segundos y se puede repetir en el lugar
 ```
 
-Copiar `goys-demo-images.tar` a un pendrive. En la laptop de la Feria, sin internet:
+Copiar **los dos `.tar`** a un pendrive (en total unos 3,3 GB). En la laptop de la Feria, sin internet:
 
 ```bash
 bash scripts/load-images.sh    # docker load del tar (no hace falta si las imágenes ya están en Docker)
-docker compose up -d                                                   # solo Acto 1
-docker compose -f docker-compose.yml -f docker-compose.act2.yml up -d  # Acto 1 + Acto 2
+bash scripts/load-model.sh     # restaura el volumen del modelo (no hace falta si el volumen ya existe)
+bash scripts/certs.sh          # certificados (usa openssl del host o, si no hay, el contenedor goys-demo/sender)
+docker compose up -d                                                                                      # solo Acto 1
+docker compose -f docker-compose.yml -f docker-compose.act2.yml up -d                                     # Acto 1 + Acto 2
+docker compose -f docker-compose.yml -f docker-compose.act2.yml -f docker-compose.act3.yml up -d          # Actos 1 + 2 + 3 (o: bash scripts/act3.sh up)
 ```
 
-Las dos imágenes locales (`goys-demo/detector:1.0.0` con scikit-learn y `goys-demo/tools:1.0.0` con nmap y tc) se construyen en `pull-images.sh`, así `pip` y `apk` corren con internet y no hacen falta en la Feria. Todas las imágenes tienen versión fija (sin `latest`). Una vez descargadas o cargadas, el stack no necesita internet: Grafana tiene desactivados los chequeos de actualización y la telemetría, y no se instalan plugins.
+Las cuatro imágenes locales (`goys-demo/tools:1.0.0` con nmap y tc, `goys-demo/detector:1.1.0` con scikit-learn, `goys-demo/rca:1.1.0` y `goys-demo/sender:1.0.0` con curl y openssl) se construyen en `pull-images.sh`, así `pip` y `apk` corren con internet y no hacen falta en la Feria. Todas las imágenes tienen versión fija (sin `latest`). Una vez descargadas o cargadas, el stack no necesita internet: Grafana tiene desactivados los chequeos de actualización y la telemetría, y no se instalan plugins.
+
+**El modelo no es una imagen.** Vive en el volumen `goys-ollama-models`, declarado `external` en el override del Acto 3: por eso `act3.sh down -v` (arranque limpio) **no lo borra**. Para borrarlo a propósito: `docker volume rm goys-ollama-models`.
+
+**Espacio en disco** (medido): los dos tars ocupan 1,97 GB (11 imágenes) y 1,32 GB (modelo `llama3.2:1b`), unos 3,3 GB en total; `docker image ls` muestra la imagen `ollama/ollama:0.40.10-rocm` en 4,65 GB (la etiqueta sin `-rocm` pesa 8,43 GB por las bibliotecas CUDA, y aquí se usa solo CPU). Los tars son sin comprimir. Sin la imagen de Ollama ni el modelo, los Actos 1 y 2 siguen funcionando.
 
 ## Acto 2: anomalías que los umbrales no ven
 
@@ -118,7 +129,7 @@ Dos incidentes **sutiles**, cada uno se inicia y se revierte con un solo comando
 | **Degradación gradual** | `tc netem` agrega 50 ms ± 25 ms de retardo a las respuestas de `api` | La sonda HTTP pasa de ~2 ms a ~100 ms y el RTT ICMP a 25-75 ms. Las reglas exigen más de 500 ms y más de 100 ms. |
 | **Escaneo lento de puertos** | Un contenedor "atacante" ejecuta `nmap -sS -T2` contra la red de la demo | No cae ningún servicio y no hay una regla sobre escaneos. El volumen total de paquetes casi no cambia; cambia la *forma* del tráfico (paquetes que nunca se convierten en conexión). |
 
-El detector (`detector/`) aprende cómo se ve lo normal durante un calentamiento y publica `goys_anomaly_score` (0 a 1) y `goys_anomaly_flag`. Usa IsolationForest de scikit-learn. La explicación completa, con las preguntas probables del jurado, está en [`ACTO-2-GUIA.md`](ACTO-2-GUIA.md).
+El detector (`detector/`) aprende cómo se ve lo normal durante un calentamiento y publica `goys_anomaly_score` (0 a 1) y `goys_anomaly_flag`. Usa IsolationForest de scikit-learn.
 
 ### Servicios nuevos
 
@@ -183,7 +194,6 @@ El tiempo de reacción lo marcan las ventanas de 30 s de las métricas y los 15 
 - Antes de ensayar, cerrar programas pesados: las sondas miden milisegundos y una laptop saturada cambia la línea base.
 - El detector solo dice que "algo raro pasa", no qué ni por qué (eso es el Acto 3).
 - Reiniciar el detector (`docker compose -f docker-compose.yml -f docker-compose.act2.yml restart detector`) borra lo aprendido y reinicia el calentamiento.
-- Límites conocidos y falsos positivos posibles: ver [`ACTO-2-GUIA.md`](ACTO-2-GUIA.md), sección 8.
 
 ### Solución de problemas del Acto 2
 
@@ -198,12 +208,185 @@ El tiempo de reacción lo marcan las ventanas de 30 s de las métricas y los 15 
 | Windows: `bash` ejecuta WSL y falla | `bash` apunta a WSL en lugar de Git Bash | Usar la terminal de Git Bash |
 | `up -d` intenta construir imágenes sin internet | No se cargaron las imágenes locales | `bash scripts/load-images.sh` antes de `up` (el tar incluye `goys-demo/detector` y `goys-demo/tools`) |
 
+## Acto 3: causa raíz con un LLM local y telemetría falsa
+
+### Qué muestra
+
+Dos escenas, que se pueden mostrar juntas o por separado.
+
+| Escena | Qué ocurre | Qué se ve |
+|--------|------------|-----------|
+| **3a. Causa raíz** | Cuando el detector del Acto 2 se activa, el servicio `rca` reúne **evidencia medida** (qué señales se desviaron, cuánto, desde cuándo) y un LLM chico y local (`llama3.2:1b` en Ollama, solo CPU, sin internet) la explica en español. | Una anotación en el tablero del Acto 2 («analizando…» y luego la explicación) y una página de solo lectura en http://localhost:8085 con la evidencia a la izquierda y el texto del LLM a la derecha. |
+| **3b. Telemetría falsa** | Un contenedor «atacante» le habla al Collector OTLP **sin autenticación** e inyecta 5 réplicas falsas de `api` que dicen 0 % de errores. Después se activa **mTLS**. | Tablero *Seguridad de la telemetría*: el promedio de errores cae y aparecen 5 emisores falsos. Con mTLS el atacante recibe un error TLS y el emisor legítimo (con certificado) sigue entrando. |
+
+### Servicios nuevos
+
+Se agregan con `docker-compose.act3.yml` (override sobre los del Acto 1 y 2). El único puerto nuevo es el 8085, solo en `127.0.0.1`.
+
+| Servicio | IP | Qué hace |
+|----------|----|----------|
+| `ollama` | 172.28.0.60 | Servidor del modelo (`ollama/ollama:0.40.10-rocm`, usa solo CPU). Límite: 4 CPU y 3 GB de RAM. El modelo vive en el volumen externo `goys-ollama-models`. |
+| `rca` | 172.28.0.61 | Servicio Python: consulta Prometheus, abre un incidente cuando `goys_anomaly_flag` sube, arma la evidencia con reglas fijas, pregunta al LLM (máx. 220 tokens, salida JSON acotada), controla la respuesta contra la evidencia y publica la anotación en Grafana y la página del puerto 8085. Si el LLM no responde a tiempo muestra una respuesta pregrabada, siempre marcada como tal (ver [Respuesta pregrabada](#respuesta-pregrabada-plan-b-si-el-llm-está-lento)). |
+| `otlp-agent` | 172.28.0.53 | Emisor **legítimo**: manda la métrica real de `api` al Collector cada pocos segundos (en texto plano o con certificado de cliente, según el modo). |
+| `poisoner` | 172.28.0.52 | Contenedor inactivo; mientras `poison on` esté activo es el atacante. No tiene certificados. |
+
+Además se reemplaza el servicio `otel-collector` (misma imagen) para agregarle una segunda configuración (`otel/overlay-plain.yaml` u `otel/overlay-mtls.yaml`), se suma el tablero `grafana/dashboards/act3-telemetria-falsa-mtls.json` y, en el tablero del Acto 2, una fila con la última explicación del LLM. **Esa fila solo se llena si el Acto 3 está levantado**; con los Actos 1 y 2 solos queda vacía.
+
+### Cómo ejecutarlo
+
+```bash
+cd demo
+bash scripts/certs.sh        # una vez (certificados de demo; ignorados por git)
+bash scripts/act3.sh up      # Actos 1 + 2 + 3 (equivale al docker compose con los tres archivos)
+```
+
+Esperar el **calentamiento del detector (3 minutos)**, igual que en el Acto 2. En ese tiempo `rca` carga el modelo en RAM; el estado se ve arriba en http://localhost:8085 (*LLM local: listo*).
+
+**Escena 3a**
+
+```bash
+bash scripts/inject-incident.sh latency on     # o: scan on
+# ~25 s: el detector se activa y aparece «analizando…» en el tablero del Acto 2
+# ~15-30 s más: la explicación (anotación + http://localhost:8085)
+bash scripts/inject-incident.sh latency off
+```
+
+**Escena 3b** (abrir http://localhost:3000/d/act3-telemetria-falsa-mtls)
+
+```bash
+bash scripts/act3.sh poison on         # el atacante inyecta 5 réplicas falsas; en ~15 s el tablero lo muestra
+bash scripts/act3.sh poison logs       # lo que ve el atacante: «ACEPTADO por el Collector (HTTP 200)»
+bash scripts/act3.sh mtls on           # el Collector exige certificado de cliente (se recrea en unos segundos)
+bash scripts/act3.sh try attacker      # error TLS exacto (ver abajo)
+bash scripts/act3.sh try legit         # el emisor con certificado sí entra: HTTP 200
+bash scripts/act3.sh mtls off          # vuelve al OTLP plano (lo que usan los Actos 1 y 2)
+bash scripts/act3.sh poison off
+bash scripts/act3.sh status            # modo, ataque, réplicas, puntos aceptados, apretones TLS rechazados
+bash scripts/act3.sh down -v           # apagar todo (el volumen del modelo se conserva)
+```
+
+El modo por defecto es **OTLP plano**, por eso los Actos 1 y 2 se comportan exactamente igual que antes. Cambiar a mTLS recrea solo el Collector y el `otlp-agent`.
+
+### Respuesta pregrabada (plan B si el LLM está lento)
+
+Un modelo de 1B puede tardar más de lo esperado en una laptop cargada o redactar algo flojo. Para no depender de eso en el escenario, `rca` tiene tres modos, que se eligen con la variable `RCA_MODE`:
+
+| Modo | Qué hace | Cuándo usarlo |
+|------|----------|---------------|
+| `auto` (por defecto) | Pregunta al LLM y espera hasta `RCA_LIVE_BUDGET_SECONDS` (30 s por defecto). Si responde, muestra la respuesta **en vivo**. Si falla o se pasa del presupuesto, muestra la respuesta **pregrabada** de esa familia de incidente y, si la respuesta en vivo llega después, la reemplaza. | **La Feria.** Si todo anda bien se ve el LLM real; si no, la demo sigue igual. |
+| `replay` | No llama nunca al LLM (ni siquiera para precargar el modelo): siempre muestra la respuesta pregrabada. | Si la laptop está muy lenta o Ollama no arranca. |
+| `live` | Solo el LLM. Si falla, queda la evidencia sola («LLM no disponible»). | Ensayos y mediciones del modelo. |
+
+```bash
+bash scripts/act3.sh up                    # modo auto
+RCA_MODE=replay bash scripts/act3.sh up    # recrea solo `rca` en modo replay (también se puede fijar en .env)
+```
+
+**Honestidad.** Una respuesta pregrabada **nunca** se presenta como en vivo. La página (insignia violeta, «respuesta PREGRABADA (no es en vivo)») y la anotación de Grafana dicen: *«Respuesta pregrabada — generada por llama3.2:1b el <fecha> ante un incidente del mismo tipo»*, más el motivo (modo replay, el LLM no respondió en 30 s, el LLM falló). Junto al texto pregrabado se muestra la **evidencia del incidente actual**, siempre medida en el momento, y, plegada, la evidencia del incidente original: las cifras del texto pregrabado son las de ese incidente, no las de ahora. Las respuestas en vivo dicen *«Respuesta en vivo — generada por llama3.2:1b durante este incidente»*. Si no hay archivo pregrabado para la familia del incidente, queda la evidencia sola, como antes.
+
+**Dónde están.** `rca/replay/<familia>.json`, una por familia de señales que reporta el detector: `latency` (incidente `latency on`) y `traffic` (incidente `scan on`). Cada archivo guarda el texto, la evidencia en la que se basó, el modelo, la fecha de generación, la duración del LLM y los avisos del control automático. Son salidas **reales** del modelo de esta demo, sin editar. Se versionan en git y se montan en el contenedor en solo lectura (`./rca/replay:/app/replay:ro`), por lo que regrabarlas no requiere reconstruir la imagen (y la API de `rca` no puede escribirlas).
+
+**Cómo regrabarlas** (después de un cambio de modelo o de prompt; hace falta internet solo si el modelo no está descargado):
+
+```bash
+bash scripts/act3.sh up                       # modo auto o live (en replay no hay respuestas en vivo)
+# esperar el calentamiento del detector (3 min) y repetir cada incidente hasta obtener una respuesta en vivo
+bash scripts/inject-incident.sh latency on    # esperar «respuesta en vivo» en http://localhost:8085
+bash scripts/inject-incident.sh latency off
+bash scripts/inject-incident.sh scan on       # idem
+bash scripts/inject-incident.sh scan off
+bash scripts/act3.sh record                   # guarda en rca/replay/ la mejor respuesta en vivo de cada familia
+git diff rca/replay                           # revisar el texto antes de versionarlo
+```
+
+`record` elige, entre las respuestas en vivo desde que arrancó `rca`, la que tenga **menos avisos** del control automático, luego sin verificaciones cortadas a mitad de frase, y entre iguales la más reciente. No edita el texto. Ese control no prueba que la explicación sea correcta (ver más arriba): conviene **leer** la respuesta y repetir el incidente si dice algo que la evidencia no respalda. Reiniciar `rca` borra las respuestas acumuladas.
+
+**Recomendación.** Para la Feria dejar `RCA_MODE=auto`. Si la laptop está muy lenta (el LLM tarda más de 30 s o satura la CPU), arrancar con `RCA_MODE=replay`: la demo muestra siempre una respuesta pregrabada, claramente marcada, y no gasta CPU en inferencia.
+
+### Qué se observó (corrida de verificación)
+
+Entorno: Docker Desktop en Windows, laptop con solo la demo corriendo, VM de Docker con 6,7 GiB. Los tiempos se cuentan desde el comando `on`.
+
+**3a. LLM local**
+
+| Situación | Resultado medido |
+|-----------|------------------|
+| `latency on` | Detector activo a los ~22 s; explicación lista a los ~47 s (el LLM tardó 20 s). |
+| `scan on` | Detector activo a los ~28 s; explicación lista a los ~50 s (el LLM tardó 14 s). |
+| Duración del LLM en general | De 12 a 28 s por incidente en las corridas de verificación. Si un control de la respuesta salta, se reintenta una vez con otra semilla y el tiempo se acerca a 30 s. |
+| Ollama detenido (`docker compose ... stop ollama`) | A los ~4-8 s de preguntar el incidente pasa a *LLM no disponible, solo evidencia* y la anotación muestra la evidencia sin texto del LLM. Nada se cuelga. |
+| `auto`, Ollama andando | Respuesta en vivo a los 12-21 s del LLM, con la etiqueta «Respuesta en vivo». |
+| `auto`, Ollama detenido | A los ~13 s de detectada la anomalía (5 s de espera de evidencia + ~8 s hasta que falla la conexión) la página y la anotación muestran la respuesta **pregrabada**, con su etiqueta, el motivo y la evidencia actual. |
+| `auto` con presupuesto de 3 s (`RCA_LIVE_BUDGET_SECONDS=3`) | A los ~8 s sale la pregrabada; a los ~26 s llega la respuesta en vivo y reemplaza a la pregrabada (página y anotación pasan a «en vivo»). |
+| `replay` | A los ~5 s (solo la espera de evidencia) sale la pregrabada. Ollama no recibió ninguna petición ni se precargó el modelo. |
+| Familia sin archivo pregrabado | Queda la evidencia sola («LLM no disponible»), como antes. |
+| Primera vez que se carga el modelo | Hasta ~60 s (el servicio lo precarga al arrancar para evitarlo en la demo). |
+
+**Importante sobre la calidad del texto.** Es un modelo de 1B parámetros: la redacción es genérica y a veces dice cosas que la evidencia no respalda (por ejemplo, atribuir el problema «a la aplicación web» sin datos para eso, o hablar de «latencia» cuando las señales eran paquetes por conexión). La demo está diseñada para que **no dependa de que acierte**: la evidencia (izquierda) es medida; el texto (derecha) se contrasta con ella. Los controles automáticos detectan cifras inventadas, cifras junto a otra señal, el sentido invertido («bajó» donde subió) y un «límite» que no existe, y los muestran como **«Atención: …»**; no detectan todos los errores de significado.
+
+**3b. Telemetría falsa y mTLS**
+
+| Situación | Resultado medido |
+|-----------|------------------|
+| Base | 1 réplica de `api` por OTLP; 0,4 puntos aceptados por segundo. |
+| `poison on` (plano) | 6 réplicas; 5,2 puntos por segundo; el promedio de errores pasa de 0,13 a ~0,02. El atacante recibe `ACEPTADO por el Collector (HTTP 200, texto plano)`. |
+| `mtls on`, `try attacker` | `RECHAZADO`. Texto plano: `HTTP 400 ... Connection reset by peer`. HTTPS sin certificado: `OpenSSL SSL_read: OpenSSL/3.3.7: error:0A00045C:SSL routines::tlsv13 alert certificate required`. |
+| `mtls on`, `try legit` | `ACEPTADO por el Collector (HTTP 200)`. |
+| Con el ataque aún activo y mTLS | Vuelve a 1 réplica y 0,4 puntos por segundo. El Collector registró 54 apretones TLS rechazados. |
+| `mtls off` con el ataque activo | El atacante vuelve a ser aceptado (por eso se apaga con `poison off`). |
+
+**Qué no se puede medir.** Un apretón TLS rechazado ocurre antes de que algún dato entre al pipeline, por lo que **no existe una métrica de Prometheus** de rechazos. El tablero lo dice con un cartel; el único conteo del lado del servidor es el log del Collector (`act3.sh status` lo cuenta) y el resultado que ve el atacante.
+
+**Recursos** (`docker stats --no-stream`, con el LLM recién usado): `ollama` ~1,5 GiB de 3 GiB, `rca` ~20 MiB y el resto de los contenedores suma ~0,3 GiB. Total ~1,8 GiB de RAM con los tres actos.
+
+### Qué esperar y qué no
+
+- El LLM **no** está para encontrar la causa por sí solo: las reglas fijas dicen qué pasó; el LLM redacta una hipótesis y pasos a verificar. Decirlo en voz alta.
+- El envenenamiento de la demo cambia lo que **ve un operador** del Collector (el tablero del Acto 3). No engaña al detector del Acto 2, que lee las sondas y el sensor directamente.
+- Con mTLS el atacante no puede inyectar, pero **nada protege contra un certificado robado** (quien tenga un certificado válido entra como emisor legítimo).
+- Los certificados son de demo: la clave de la CA se queda en `certs/ca/` y no se monta en ningún contenedor. No se versionan.
+- Si el LLM tarda, la anotación «analizando…» ya está visible: no hay que esperar en silencio.
+
+### Solución de problemas del Acto 3
+
+| Síntoma | Causa probable | Qué hacer |
+|---------|----------------|-----------|
+| `external volume "goys-ollama-models" not found` | No se descargó ni se restauró el modelo | `bash scripts/pull-model.sh` (con internet) o `bash scripts/load-model.sh` (desde el tar) |
+| `http://localhost:8085` dice *LLM local: no disponible* | Ollama sigue cargando o está caído | `docker compose -f docker-compose.yml -f docker-compose.act2.yml -f docker-compose.act3.yml logs ollama`; esperar 30 s tras el arranque |
+| No aparece ninguna explicación | El detector sigue en calentamiento o no se activó | `bash scripts/inject-incident.sh status` debe mostrar `flag=1`; el calentamiento dura 3 minutos |
+| La página dice «respuesta PREGRABADA» y no se esperaba | El LLM no respondió en `RCA_LIVE_BUDGET_SECONDS`, falló, o `RCA_MODE=replay` | El motivo está escrito en la propia respuesta. Con `auto`, si el LLM termina después, la respuesta en vivo la reemplaza |
+| `act3.sh record` dice que no hay respuesta en vivo | No hubo incidentes con respuesta en vivo desde que arrancó `rca` (o está en `replay`) | Repetir `latency on` / `scan on` hasta ver «respuesta en vivo» y volver a correr `record` |
+| Hay una segunda explicación | El detector bajó y volvió a subir (nuevo episodio) | Es normal; la más reciente es la que cuenta |
+| Texto con «Atención: …» | Un control automático detectó algo dudoso | Es parte de la demo: mostrar que la evidencia permite verlo |
+| `act3.sh mtls on` falla al crear certificados | No hay `openssl` en el host y Docker no tiene la imagen `goys-demo/sender` | `bash scripts/pull-images.sh`, o `CERTS_USE_DOCKER=1 bash scripts/certs.sh` |
+| `try attacker` sigue ACEPTADO con mTLS activo | El Collector no se recreó | `bash scripts/act3.sh status` debe decir `mTLS requested: mtls`; repetir `mtls on` |
+| Git Bash cambia rutas (`C:/Program Files/Git/...`) | Conversión de rutas de MSYS | Los scripts ya exportan `MSYS_NO_PATHCONV=1`; si se corre un comando a mano, anteponerlo |
+| Con los Actos 1 y 2 solos, el tablero muestra una fila «Acto 3» vacía | Esperado | No hace falta hacer nada |
+
+## Presentación de 4 minutos: los tres actos
+
+Preparación (antes de que entre el público): `bash scripts/act3.sh down -v` (con los tres archivos; un `docker compose down -v` a secas deja los contenedores de los Actos 2 y 3 en pie), `bash scripts/act3.sh up`, **esperar 3 minutos de calentamiento**, abrir en pestañas http://localhost:3000 (tableros de los Actos 1 y 2), http://localhost:3000/d/act3-telemetria-falsa-mtls y http://localhost:8085. Comprobar que `inject-incident.sh status` dice `latency: off` y `scan: off`.
+
+| Tiempo | Acto | Qué se hace | Qué se dice (idea) |
+|--------|------|-------------|---------------------|
+| 0:00 - 0:45 | **1. Tradicional** | Tablero del Acto 1: sondas en verde, alertas por umbral en cero. | «Un monitoreo clásico mira umbrales: está todo verde.» |
+| 0:45 - 1:00 | | `bash scripts/inject-incident.sh latency on` | «Ahora degrado la red de `api`, pero poco.» |
+| 1:00 - 1:45 | **2. Anomalías** | Tablero del Acto 2: sube el puntaje y la alerta ML se activa (~25 s); las alertas por umbral siguen en cero. | «Los umbrales no ven nada; el modelo aprendió lo normal y nota que la forma cambió.» |
+| 1:45 - 2:30 | **3a. Causa raíz** | Aparece la anotación del LLM (~45-50 s desde el comando); abrir http://localhost:8085. Luego `latency off`. | «El LLM solo recibió la columna de la izquierda, medida. Es una hipótesis, no un veredicto.» |
+| 2:30 - 3:05 | **3b. Telemetría falsa** | `act3.sh poison on`; tablero del Acto 3: aparecen 5 réplicas falsas y el promedio de errores cae. | «Si alguien puede hablar con el Collector, puede mentirnos: HTTP 200, sin preguntar quién era.» |
+| 3:05 - 3:45 | **3b. mTLS** | `act3.sh mtls on`, `act3.sh try attacker` (error TLS), `act3.sh try legit` (HTTP 200). | «Ahora el Collector exige certificado. El atacante queda afuera, el agente legítimo entra.» |
+| 3:45 - 4:00 | Cierre | `act3.sh mtls off` y `act3.sh poison off` (si falta tiempo, después). | «Detectar, explicar y proteger: los tres pasos.» |
+
+Notas: el LLM tarda entre 15 y 30 s, pero el detector se activa antes, así que el Acto 3a se solapa con el segundo acto; si hay prisa se muestra la anotación en el tablero y la página se abre después. Plan B si el LLM falla o tarda: con `RCA_MODE=auto` (por defecto) la página y la anotación pasan a la respuesta **pregrabada**, marcada como tal y junto a la evidencia actual; con `RCA_MODE=replay` se usa siempre. Sin archivo pregrabado, queda la evidencia sola («LLM no disponible») y la demo sigue. Después de ensayar: `act3.sh poison off`, `act3.sh mtls off` y `bash scripts/inject-incident.sh latency off`.
+
 ## Puntos de extensión
 
 - **Red `demo-net`**: bridge con subred fija `172.28.0.0/24` e IPs fijas por servicio (ver arquitectura). Un contenedor adicional se puede sumar con un archivo de override, como hace `docker-compose.act2.yml`.
 - **Nuevos targets de Prometheus**: agregar un archivo YAML en `prometheus/targets/` (formato `file_sd`); se recarga solo cada 10 s. No hace falta tocar `prometheus.yml`. Con el override del Acto 2 esa ruta apunta a `prometheus/targets-act2/`.
 - **Nuevas reglas**: agregar archivos `.yml` en `prometheus/rules/` y recargar con `curl -X POST localhost:9090/-/reload`.
-- **Collector**: `otel/collector-config.yaml` ya tiene un pipeline de métricas (OTLP → Prometheus en el puerto 8889) que el Acto 3 puede usar como entrada o salida.
+- **Collector**: `otel/collector-config.yaml` tiene el pipeline de métricas (OTLP → Prometheus en el puerto 8889). El Acto 3 le suma una segunda configuración (`otel/overlay-plain.yaml` u `otel/overlay-mtls.yaml`) con `--config` repetido: el Collector combina ambos archivos.
+- **Otro modelo de LLM**: `RCA_MODEL` en `.env` (por ejemplo, otro modelo ya descargado con `ollama pull` dentro del volumen). Cambia la calidad del texto y la duración; las pruebas de la demo se hicieron con `llama3.2:1b`. Después de cambiarlo, regrabar las respuestas pregrabadas (`act3.sh record`).
+- **Más señales para el LLM**: agregar el nombre y su descripción en `GLOSSARY` y en `FAMILY_TARGET` de `rca/main.py`.
 
 ## Solución de problemas
 
@@ -215,6 +398,7 @@ El tiempo de reacción lo marcan las ventanas de 30 s de las métricas y los 15 
 | Sondas ICMP en 0 | El contenedor `blackbox` no tiene `NET_RAW` | Verificar `cap_add: [NET_RAW]` en el servicio `blackbox`. |
 | `pull access denied` / `no such host` sin internet | Imágenes no descargadas | Correr `scripts/load-images.sh` con el tar de respaldo. |
 | Grafana no muestra el dashboard | Error de aprovisionamiento | `docker compose logs grafana` y revisar `grafana/provisioning/` y `grafana/dashboards/`. |
+| Con el Acto 3: `docker compose up` falla por el volumen `goys-ollama-models` | El volumen del modelo es externo y no existe | Ver «Solución de problemas del Acto 3» |
 | Windows: los scripts `.sh` no corren | No hay bash | Usar Git Bash o WSL, o ejecutar a mano los comandos `docker compose pull` y `docker save`. |
 | Las métricas del host no son las de Windows | `node_exporter` mide la VM Linux de Docker Desktop | Es esperable; es suficiente para la demo. |
 
@@ -224,11 +408,14 @@ El tiempo de reacción lo marcan las ventanas de 30 s de las métricas y los 15 
 demo/
 ├── docker-compose.yml
 ├── docker-compose.act2.yml            # override del Acto 2 (detector, atacante, cliente, netem, sensor)
-├── ACTO-2-GUIA.md                     # guía de estudio del Acto 2
+├── docker-compose.act3.yml            # override del Acto 3 (ollama, rca, otlp-agent, poisoner, Collector con overlay)
 ├── .env.example
 ├── blackbox/blackbox.yml              # módulos HTTP, TCP e ICMP
 ├── nginx/api.conf                     # configuración del servicio api
-├── otel/collector-config.yaml         # OpenTelemetry Collector
+├── otel/
+│   ├── collector-config.yaml          # OpenTelemetry Collector (base)
+│   ├── overlay-plain.yaml             # Acto 3: OTLP sin TLS (por defecto)
+│   └── overlay-mtls.yaml              # Acto 3: OTLP con mTLS
 ├── prometheus/
 │   ├── prometheus.yml
 │   ├── rules/traditional-alerts.yml   # alertas por umbral (línea base)
@@ -239,6 +426,16 @@ demo/
 │   ├── main.py
 │   ├── requirements.txt
 │   └── Dockerfile
+├── rca/                               # Acto 3a: evidencia + LLM local + anotación de Grafana
+│   ├── main.py                        # monitor, evidencia, prompt, controles, anotación
+│   ├── page.py                        # página de solo lectura (puerto 8085)
+│   ├── requirements.txt
+│   └── Dockerfile
+├── sender/                            # Acto 3b: imagen con curl y openssl (emisor legítimo y atacante)
+│   ├── Dockerfile
+│   ├── otlp.sh
+│   ├── legit.sh
+│   └── attack.sh
 ├── tools/                             # imagen con nmap y tc (atacante, cliente, netem)
 │   ├── Dockerfile
 │   ├── scan.sh
@@ -247,6 +444,8 @@ demo/
 │   ├── provisioning/                  # datasource y proveedor de dashboards
 │   └── dashboards/
 │       ├── act1-monitoreo-tradicional.json
-│       └── act2-deteccion-anomalias.json
-└── scripts/                           # pull-images.sh, save-images.sh, load-images.sh, inject-incident.sh
+│       ├── act2-deteccion-anomalias.json
+│       └── act3-telemetria-falsa-mtls.json
+├── certs/                             # generada por certs.sh (ignorada por git)
+└── scripts/                           # pull/save/load-images.sh, pull/save/load-model.sh, inject-incident.sh, act3.sh, certs.sh
 ```

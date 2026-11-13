@@ -3,3 +3,7 @@ images/
 *.tar
 *.tar.gz
 .env
+
+# Act 3: demo PKI (private keys) and the current mTLS setting. Never commit.
+certs/
+.act3-mode

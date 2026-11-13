@@ -5,6 +5,8 @@
 # authentication. In a hardened deployment they would use `tls:` with `client_ca_file` (mTLS)
 # and bind to a specific interface instead of 0.0.0.0. Inside the container 0.0.0.0 is required
 # because the host publishes the ports on loopback only (see docker-compose.yml).
+# Act 3 shows the attack on this configuration and the fix: otel/overlay-mtls.yaml is merged on top
+# of this file (scripts/act3.sh mtls on).
 receivers:
   otlp:
     protocols:
@@ -20,6 +22,9 @@ processors:
 exporters:
   prometheus:
     endpoint: 0.0.0.0:8889
+    # Forget an OTLP series 30 s after its last data point (default 5 min). Act 3 injects and removes
+    # forged series; a short expiry makes them disappear from the dashboard soon after the attack stops.
+    metric_expiration: 30s
   debug:
     verbosity: basic
 

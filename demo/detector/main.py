@@ -7,6 +7,10 @@ What it does, in four steps:
   4. From then on it scores every new sample and publishes the result on /metrics:
        goys_anomaly_score  0..1, higher = more anomalous (0.5 = "cannot tell", above 0.6 = alarm)
        goys_anomaly_flag   1 when the score stays above the alarm line for a few samples in a row
+
+Act 3 (root-cause explanation) reads two extra things from /metrics: every feature now carries its
+family, and the baseline learned during the warm-up (mean and standard deviation of each feature)
+is published once the models are trained. The rca service compares "now" against that baseline.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ class Family:
     """A group of features that move together during one kind of incident.
 
     tolerance: how much a feature may wobble for normal reasons, as a fraction of its usual value
-    (0.5 = +-50 %). See blur() and ACTO-2-GUIA.md for why the model needs it."""
+    (0.5 = +-50 %). See blur() for why the model needs it."""
 
     tolerance: float
     features: dict[str, str]  # feature name -> PromQL returning exactly one number
@@ -83,6 +87,12 @@ FAMILIES: dict[str, Family] = {
             "rx_bytes_per_conn": f"{RX_BYTES} / {CONNECTIONS}",
         },
     ),
+}
+
+
+# Reverse lookup used to label every feature gauge with its family.
+FEATURE_FAMILY: dict[str, str] = {
+    name: family_name for family_name, family in FAMILIES.items() for name in family.features
 }
 
 
@@ -148,6 +158,8 @@ class FamilyModel:
         # n_estimators: how many random trees vote. random_state: same result on every run.
         self.forest = IsolationForest(n_estimators=200, random_state=42)
         self.forest.fit(blur(data, family.tolerance))
+        # What "normal" looked like (before blurring): published so Act 3 can explain deviations.
+        self.baseline = {name: (float(data[:, i].mean()), float(data[:, i].std())) for i, name in enumerate(self.features)}
         training_scores = self.score_rows(data)
         log.info(
             "Family trained on %d samples: normal scores %.3f..%.3f (%s)",
@@ -175,7 +187,9 @@ def main() -> None:
     ready_gauge = Gauge("goys_detector_ready", "1 once the baseline is trained, 0 while warming up")
     progress_gauge = Gauge("goys_detector_warmup_progress", "Warm-up progress, 0..1")
     family_score_gauge = Gauge("goys_family_score", "IsolationForest score of one family", ["family"])
-    feature_gauge = Gauge("goys_detector_feature", "Feature values the detector reads", ["name"])
+    feature_gauge = Gauge("goys_detector_feature", "Feature values the detector reads", ["family", "name"])
+    baseline_mean_gauge = Gauge("goys_detector_baseline_mean", "Mean of a feature during the warm-up", ["family", "name"])
+    baseline_std_gauge = Gauge("goys_detector_baseline_std", "Standard deviation of a feature during the warm-up", ["family", "name"])
 
     start_http_server(cfg.port)
     threshold_gauge.set(cfg.alarm_threshold)
@@ -196,7 +210,7 @@ def main() -> None:
 
         if sample is not None:
             for name, value in sample.items():
-                feature_gauge.labels(name=name).set(value)
+                feature_gauge.labels(family=FEATURE_FAMILY[name], name=name).set(value)
 
             if not models:
                 # Warm-up: everything we see is assumed normal (after the settle time).
@@ -216,6 +230,10 @@ def main() -> None:
             progress_gauge.set(min(elapsed / cfg.warmup_seconds, 1.0))
             if elapsed >= cfg.warmup_seconds and len(normal_rows) >= cfg.min_samples:
                 models = {name: FamilyModel(family, normal_rows) for name, family in FAMILIES.items()}
+                for family_name, model in models.items():
+                    for feature, (mean, std) in model.baseline.items():
+                        baseline_mean_gauge.labels(family=family_name, name=feature).set(mean)
+                        baseline_std_gauge.labels(family=family_name, name=feature).set(std)
                 ready_gauge.set(1)
 
         time.sleep(max(0.0, cfg.interval_seconds - (time.monotonic() - loop_start)))
