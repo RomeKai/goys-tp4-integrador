@@ -29,7 +29,8 @@ body { margin: 0; line-height: 1.5; text-align: justify; hyphens: auto; -webkit-
 /* Portada */
 .portada { page-break-after: always; text-align: center; line-height: 1.35; min-height: 24.5cm; display: flex; flex-direction: column; justify-content: space-between; }
 .portada h1 { font-size: 20pt; line-height: 1.25; margin: 0.6cm 0 0.8cm; text-align: center; }
-.portada .logo { display: inline-block; border: 1pt dashed #666; padding: 18pt 28pt; margin: 8pt auto 0; font-size: 10pt; color: #555; }
+.portada .logo { display: block; margin: 8pt auto 0; }
+.portada .logo img { height: 3.2cm; width: auto; }
 .portada .top { margin-top: 0.2cm; }
 .portada p { margin: 3pt 0; text-align: center; }
 .portada ul { list-style: none; padding: 0; margin: 2pt 0 4pt; text-align: center; }
@@ -58,6 +59,17 @@ figure img { width: 90%; height: auto; }
 p.ref { font-size: 12pt; line-height: 1.15; margin: 0 0 2pt; padding-left: 1.27cm; text-indent: -1.27cm; text-align: left; overflow-wrap: anywhere; hyphens: manual; }
 """
 
+
+
+def logo_html() -> str:
+    """Cover logo embedded as a data URI, so the temporary HTML needs no relative paths."""
+    import base64
+    from pathlib import Path
+    logo = Path(__file__).with_name("logo-utn.png")
+    if not logo.exists():
+        return '<div class="logo">[Logo UTN]</div>'
+    data = base64.b64encode(logo.read_bytes()).decode("ascii")
+    return f'<div class="logo"><img src="data:image/png;base64,{data}" alt="Logo de la UTN"></div>'
 
 def inline(text: str, cover: bool = False) -> str:
     t = html.escape(text, quote=False)
@@ -98,7 +110,7 @@ def convert(md: str) -> str:
         if not s or s.startswith("# "):
             continue
         if s == "![UTN Logo]":
-            top.append('<div class="logo">[Logo de la UTN: insertar aquí]</div>')
+            top.append(logo_html())
         elif s.startswith("- "):
             if not in_list:
                 datos.append("<ul>")
